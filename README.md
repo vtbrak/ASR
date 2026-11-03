@@ -17,6 +17,37 @@ New to this? Follow the step-by-step guide in **[INSTALL.md](INSTALL.md)**. The 
 
 From a terminal instead: `conda activate asr && python -m asr_app`.
 
+## Starting the program each time
+
+After the first-time setup, use either method below. That includes after closing the program, logging
+out, or restarting the Mac. **You never need to open Anaconda or run `Setup_Environment.command` again**;
+`ASR_Startle.command` switches on the program's environment by itself every time.
+
+**Method 1: Double-click**
+- Double-click **`ASR_Startle.command`** in the ASR folder (or its Dock icon, if you added one).
+- Important:
+  - If macOS asks for an **administrator password**, cancel and use Method 2 instead.
+  - A Terminal window opens first. **Leave it open**; closing it quits the program.
+
+**Method 2: Terminal (no password)**
+- Open **Terminal** (⌘ + Space, type *Terminal*, press Return).
+- Type `cd`, a space, then **drag the ASR folder** into the window and press Return.
+- Type `./ASR_Startle.command` and press Return.
+- Important:
+  - Put a **space after `cd`** before dragging the folder in.
+  - Start the file name with **`./`** ("this folder"). Tip: type `./ASR` and press **Tab** to fill in the rest.
+  - "No such file or directory" means Terminal isn't in the ASR folder; repeat the `cd` step.
+  - "Permission denied": type `bash ./ASR_Startle.command` instead.
+  - **Leave the Terminal window open** while the program runs.
+
+**Both methods**
+- Plug in the camera, USB microphone and amplifier **before** starting. If you plug the camera in later,
+  click **Refresh list** on the Camera tab, then **Apply / restart camera**.
+- Close the program with its own window (the red button). Saved settings, calibration and experimenter
+  names are kept for next time.
+- Only run `Setup_Environment.command` again after installing a newer version of the program, or if
+  the program stops starting because something is missing.
+
 ## Before each day
 
 - Plug the amplifier into the headphone jack. In **Settings**, choose *External Headphones* as the
