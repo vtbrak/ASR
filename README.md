@@ -7,6 +7,8 @@ check sync. Every stimulus is logged with the video frame it occurred in.
 
 ## First-time setup
 
+New to this? Follow the step-by-step guide in **[INSTALL.md](INSTALL.md)**. The short version:
+
 1. Double-click **`Setup_Environment.command`** (creates the `asr` Anaconda environment, a few minutes).
    If macOS blocks it, right-click > Open.
 2. Double-click **`ASR_Startle.command`** to start the program.
