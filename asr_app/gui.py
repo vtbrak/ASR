@@ -20,8 +20,73 @@ from .session import Session
 from .stimuli import make_stimulus
 
 PREVIEW_W, PREVIEW_H = 640, 360
+PREVIEW_MIN_W = 240
+LEFT_MIN_W = 480
 SYSTEM_DEFAULT = "System default"
 NO_MIC = "None (don't record audio)"
+
+
+class ScrollFrame(ttk.Frame):
+    """A frame whose content scrolls; scrollbars appear only when content is cut off."""
+
+    def __init__(self, parent, padding=10):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        self.vbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.hbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.inner = ttk.Frame(self.canvas, padding=padding)
+        self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self._update())
+        self.canvas.bind("<Configure>", lambda e: self._update())
+        for w in (self.canvas, self.inner):
+            w.bind("<Enter>", lambda e: self._bind_wheel(True))
+            w.bind("<Leave>", lambda e: self._bind_wheel(False))
+        self._last = None
+        self._poll()
+
+    def _poll(self):
+        # Content can change its requested size without any <Configure> event
+        # (e.g. the video shrinking), so re-check a few times a second.
+        self._update()
+        self.after(300, self._poll)
+
+    def _update(self):
+        cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
+        rw, rh = self.inner.winfo_reqwidth(), self.inner.winfo_reqheight()
+        if (cw, ch, rw, rh) == self._last:
+            return
+        self._last = (cw, ch, rw, rh)
+        # Stretch content to fill the visible area, but never squash it below its natural size.
+        self.canvas.itemconfigure(self._win, width=max(cw, rw), height=max(ch, rh))
+        self.canvas.configure(scrollregion=(0, 0, max(cw, rw), max(ch, rh)))
+        for bar, needed in ((self.vbar, rh > ch + 1), (self.hbar, rw > cw + 1)):
+            if needed:
+                bar.grid()
+            else:
+                bar.grid_remove()
+
+    def _bind_wheel(self, on):
+        if on:
+            self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+            self.canvas.bind_all("<Shift-MouseWheel>", self._on_shift_wheel)
+        else:
+            self.canvas.unbind_all("<MouseWheel>")
+            self.canvas.unbind_all("<Shift-MouseWheel>")
+
+    def _on_wheel(self, event):
+        if isinstance(event.widget, (tk.Text, tk.Listbox)) or self.vbar.winfo_ismapped() == 0:
+            return
+        self.canvas.yview_scroll(-int(event.delta) or -1, "units")
+
+    def _on_shift_wheel(self, event):
+        if self.hbar.winfo_ismapped():
+            self.canvas.xview_scroll(-int(event.delta) or -1, "units")
 
 
 class App:
@@ -59,48 +124,116 @@ class App:
         style.configure("Big.TButton", font=("Helvetica", 15, "bold"), padding=8)
         style.configure("Status.TLabel", font=("Menlo", 12))
         style.configure("Header.TLabel", font=("Helvetica", 13, "bold"))
+        style.configure("Stop.TButton", font=("Helvetica", 15, "bold"), padding=8, foreground="#b00020")
 
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        nb = ttk.Notebook(self.root)
-        nb.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        right = ttk.Frame(self.root)
-        right.grid(row=0, column=1, sticky="n", padx=6, pady=6)
+        self.root.minsize(820, 540)
+        self.root.geometry("1450x900")
+        # Control bar first, packed at the bottom, so it is never squeezed out of the window.
+        self._build_control_bar()
+        ttk.Separator(self.root).pack(side="bottom", fill="x")
 
-        self.tab_session = ttk.Frame(nb, padding=10)
-        self.tab_protocol = ttk.Frame(nb, padding=10)
-        self.tab_cal = ttk.Frame(nb, padding=10)
-        self.tab_camera = ttk.Frame(nb, padding=10)
-        self.tab_settings = ttk.Frame(nb, padding=10)
-        for tab, name in ((self.tab_session, "Session"), (self.tab_protocol, "Protocol"),
-                          (self.tab_cal, "Calibration"), (self.tab_camera, "Camera"),
-                          (self.tab_settings, "Settings")):
-            nb.add(tab, text=name)
+        # Tabs and video side by side with a draggable divider; neither side can collapse.
+        paned = tk.PanedWindow(self.root, orient="horizontal", sashwidth=10, sashrelief="raised",
+                               showhandle=True, handlesize=10, handlepad=60, opaqueresize=True)
+        paned.pack(side="top", fill="both", expand=True, padx=4, pady=4)
+        left = ttk.Frame(paned)
+        right = ScrollFrame(paned, padding=4)
+        paned.add(left, minsize=LEFT_MIN_W, stretch="always")
+        paned.add(right, minsize=PREVIEW_MIN_W + 30, stretch="always")
+        self.paned = paned
+        # Keep the video panel at a fixed share of the window (the share changes when the
+        # divider is dragged), so shrinking the window shrinks both sides.
+        self._right_frac = 0.45
+        paned.bind("<ButtonRelease-1>", self._on_sash_moved, add="+")
+        self.root.bind("<Configure>", self._on_root_resize, add="+")
+
+        nb = ttk.Notebook(left)
+        nb.pack(fill="both", expand=True)
+        tabs = {}
+        for key, name in (("session", "Session"), ("protocol", "Protocol"), ("cal", "Calibration"),
+                          ("camera", "Camera"), ("settings", "Settings")):
+            sf = ScrollFrame(nb)
+            nb.add(sf, text=name)
+            tabs[key] = sf.inner
+        self.tab_session, self.tab_protocol = tabs["session"], tabs["protocol"]
+        self.tab_cal, self.tab_camera, self.tab_settings = tabs["cal"], tabs["camera"], tabs["settings"]
         self.notebook = nb
 
-        self._build_preview(right)
+        self._build_preview(right.inner)
+        self.preview_pane = right
         self._build_session_tab()
         self._build_protocol_tab()
         self._build_calibration_tab()
         self._build_camera_tab()
         self._build_settings_tab()
 
+    def _build_control_bar(self):
+        bar = ttk.Frame(self.root, padding=(10, 6))
+        bar.pack(side="bottom", fill="x")
+        self.btn_start = ttk.Button(bar, text="START SESSION", style="Big.TButton", command=self.on_start)
+        self.btn_start.pack(side="left", padx=(0, 4))
+        self.btn_stop = ttk.Button(bar, text="STOP", style="Stop.TButton", command=self.on_stop)
+        self.btn_stop.pack(side="left", padx=4)
+        self.btn_next = ttk.Button(bar, text="Next animal", style="Big.TButton",
+                                   command=self.on_next_animal, state="disabled")
+        self.btn_next.pack(side="left", padx=4)
+        self.btn_noise = ttk.Button(bar, text="Start background noise", command=self.toggle_noise)
+        self.btn_noise.pack(side="left", padx=(12, 4))
+        self.big_status = tk.StringVar(value="Starting...")
+        tk.Label(bar, textvariable=self.big_status, font=("Helvetica", 18, "bold"),
+                 fg="#b00020", anchor="e").pack(side="right", fill="x", expand=True)
+        self.root.bind_all("<Escape>", lambda e: self.on_stop())
+
     def _build_preview(self, parent):
         self._photo = ImageTk.PhotoImage(Image.new("RGB", (PREVIEW_W, PREVIEW_H)))
         self.preview = tk.Label(parent, bg="black", image=self._photo)
-        self.preview.pack()
-        self.big_status = tk.StringVar(value="Starting...")
-        tk.Label(parent, textvariable=self.big_status, font=("Helvetica", 20, "bold"),
-                 fg="#b00020").pack(pady=(8, 2))
+        self.preview.pack(anchor="n")
+        self.preview_box = (PREVIEW_W, PREVIEW_H)
+        parent.master.bind("<Configure>", self._on_preview_resize, add="+")
         grid = ttk.Frame(parent)
         grid.pack(fill="x")
         self.status_vars = {}
-        for i, key in enumerate(["Camera", "Recording", "Elapsed", "Next stimulus", "Trial",
+        self.status_value_labels = []
+        for i, key in enumerate(["Camera", "Video", "Recording", "Elapsed", "Next stimulus", "Trial",
                                  "Dropped frames", "Microphone", "Background noise", "Mac volume"]):
             ttk.Label(grid, text=key + ":", style="Status.TLabel").grid(row=i, column=0, sticky="w")
             v = tk.StringVar(value="-")
-            ttk.Label(grid, textvariable=v, style="Status.TLabel").grid(row=i, column=1, sticky="w")
+            lab = ttk.Label(grid, textvariable=v, style="Status.TLabel", wraplength=400)
+            lab.grid(row=i, column=1, sticky="w")
+            self.status_value_labels.append(lab)
             self.status_vars[key] = v
+
+    def _on_root_resize(self, event):
+        if event.widget is self.root:
+            self.root.after_idle(self._place_sash)
+
+    def _place_sash(self):
+        width = self.paned.winfo_width()
+        if width < 50:
+            return
+        right = width * self._right_frac
+        right = min(max(right, PREVIEW_MIN_W + 30), PREVIEW_W * 2, max(PREVIEW_MIN_W + 30, width - LEFT_MIN_W))
+        x = int(width - right)
+        if abs(self.paned.sash_coord(0)[0] - x) > 2:
+            self.paned.sash_place(0, x, 1)
+
+    def _on_sash_moved(self, event):
+        width = self.paned.winfo_width()
+        if width > 50:
+            self._right_frac = (width - self.paned.sash_coord(0)[0]) / width
+
+    def _on_preview_resize(self, event):
+        """Fit the video to the right-hand panel, leaving room for the status lines below it."""
+        w = max(PREVIEW_MIN_W, event.width - 36)   # room for padding, border and a scrollbar
+        room_h = event.height - 260
+        if room_h >= PREVIEW_MIN_W * 9 // 16:
+            w = min(w, int(room_h * 16 / 9))
+        w = max(PREVIEW_MIN_W, min(w, 1280))
+        for lab in self.status_value_labels:
+            lab.configure(wraplength=max(100, event.width - 200))
+        if (w, w * 9 // 16) != self.preview_box:
+            self.preview_box = (w, w * 9 // 16)
+            self._preview_count = -1
 
     # ---------------------------------------------------------------------
     def _build_session_tab(self):
@@ -108,7 +241,7 @@ class App:
         ttk.Label(f, text="Experimenter", style="Header.TLabel").grid(row=0, column=0, sticky="w")
         self.var_experimenter = tk.StringVar(value=self.settings.get("last_experimenter", ""))
         self.cb_experimenter = ttk.Combobox(f, textvariable=self.var_experimenter, state="readonly",
-                                            width=28)
+                                            width=24)
         self.cb_experimenter.grid(row=0, column=1, sticky="w", pady=2)
         self.cb_experimenter.bind("<<ComboboxSelected>>", self.on_experimenter)
         self._refresh_experimenters()
@@ -124,8 +257,9 @@ class App:
                 w = ttk.Combobox(f, textvariable=v, values=["", "Male", "Female", "Unknown"],
                                  state="readonly", width=12)
             else:
-                w = ttk.Entry(f, textvariable=v, width=40 if key == "notes" else 30)
-            w.grid(row=i, column=1, sticky="w", pady=2)
+                w = ttk.Entry(f, textvariable=v, width=12 if key == "notes" else 26)
+            # Notes stretches with the pane (and shrinks back) instead of forcing a scrollbar.
+            w.grid(row=i, column=1, sticky="ew" if key == "notes" else "w", pady=2)
             self.animal_vars[key] = v
             if key == "animal_id":
                 self.entry_animal = w
@@ -133,35 +267,29 @@ class App:
         r = len(fields) + 1
         ttk.Label(f, text="Protocol", style="Header.TLabel").grid(row=r, column=0, sticky="w", pady=(10, 2))
         self.var_protocol = tk.StringVar()
-        self.cb_protocol = ttk.Combobox(f, textvariable=self.var_protocol, state="readonly", width=28)
+        self.cb_protocol = ttk.Combobox(f, textvariable=self.var_protocol, state="readonly", width=24)
         self.cb_protocol.grid(row=r, column=1, sticky="w", pady=(10, 2))
         self.cb_protocol.bind("<<ComboboxSelected>>", lambda e: self.on_protocol_selected())
 
         r += 1
         ttk.Label(f, text="Save data in").grid(row=r, column=0, sticky="w")
         df = ttk.Frame(f)
-        df.grid(row=r, column=1, sticky="w")
+        df.grid(row=r, column=1, sticky="ew")
         self.var_data_dir = tk.StringVar(value=self.settings["data_dir"])
-        ttk.Label(df, textvariable=self.var_data_dir, width=45).pack(side="left")
-        ttk.Button(df, text="Change...", command=self.choose_data_dir).pack(side="left")
+        ttk.Button(df, text="Change...", command=self.choose_data_dir).pack(side="right")
+        self.lbl_data_dir = ttk.Label(df, textvariable=self.var_data_dir, wraplength=120)
+        self.lbl_data_dir.pack(side="left", fill="x", expand=True)
+        # Wrap the folder path to the visible tab width (not the row's own width, which
+        # would never let it shrink back).
+        f.master.bind("<Configure>", lambda e: self.lbl_data_dir.configure(
+            wraplength=max(120, e.width - 230)), add="+")
 
         r += 1
-        bf = ttk.Frame(f)
-        bf.grid(row=r, column=0, columnspan=2, sticky="w", pady=12)
-        self.btn_noise = ttk.Button(bf, text="Start background noise", command=self.toggle_noise)
-        self.btn_noise.pack(side="left", padx=(0, 8))
-        self.btn_start = ttk.Button(bf, text="START SESSION", style="Big.TButton",
-                                    command=self.on_start)
-        self.btn_start.pack(side="left", padx=4)
-        self.btn_stop = ttk.Button(bf, text="STOP", style="Big.TButton", command=self.on_stop,
-                                   state="disabled")
-        self.btn_stop.pack(side="left", padx=4)
-        self.btn_next = ttk.Button(bf, text="Next animal", style="Big.TButton",
-                                   command=self.on_next_animal, state="disabled")
-        self.btn_next.pack(side="left", padx=4)
-
+        ttk.Label(f, text="Log", style="Header.TLabel").grid(row=r, column=0, sticky="w", pady=(12, 2))
         r += 1
-        self.log_text = ScrolledText(f, height=14, width=90, font=("Menlo", 11), state="disabled")
+        # Small requested width so the log shrinks with the pane; it wraps long lines.
+        self.log_text = ScrolledText(f, height=14, width=20, font=("Menlo", 11), state="disabled",
+                                     wrap="word")
         self.log_text.grid(row=r, column=0, columnspan=2, sticky="nsew")
         f.rowconfigure(r, weight=1)
         f.columnconfigure(1, weight=1)
@@ -1233,24 +1361,32 @@ class App:
             self._set_session_inputs("normal")
             self.big_status.set("")
             return
-        self.btn_stop.configure(state="normal")
         self.btn_next.configure(state="disabled")
 
     def on_stop(self):
+        """Always available: cancels the countdown, stops a session, or silences all sound."""
         if self._countdown is not None:
             self._countdown = None
             self.big_status.set("Cancelled")
             self.btn_start.configure(state="normal")
             self._set_session_inputs("normal")
             return
-        if self.recording() and messagebox.askyesno("Stop", "Stop the session now? Everything recorded "
-                                                    "so far will be saved."):
-            self._end_session(early=True)
+        if self.recording():
+            if messagebox.askyesno("Stop", "Stop the session now? Everything recorded so far will be saved."):
+                self._end_session(early=True)
+            return
+        self.stop_cal_sound()
+        if self.engine:
+            if self.engine.noise_target > 0:
+                self.log("Background noise off (STOP).")
+            self.engine.set_noise_dbfs(None)
+            self.engine.set_cal_tone(0, None)
+            self.engine.cancel_all()
+        self.big_status.set("All sound stopped")
 
     def _end_session(self, early):
         s = self.session
         s.stop(early=early)
-        self.btn_stop.configure(state="disabled")
         self.big_status.set("Saving...")
         self.finalize_thread = threading.Thread(target=self._finalize, args=(s,), daemon=True)
         self.finalize_thread.start()
@@ -1286,7 +1422,7 @@ class App:
             if cam is not None and cam.latest is not None and cam.frame_count != self._preview_count:
                 self._preview_count = cam.frame_count
                 img = Image.fromarray(cam.latest)
-                img.thumbnail((PREVIEW_W, PREVIEW_H), Image.BILINEAR)
+                img.thumbnail(self.preview_box, Image.BILINEAR)
                 img = img.convert("RGB")
                 d = ImageDraw.Draw(img)
                 s = self.session
@@ -1312,10 +1448,12 @@ class App:
         cam = self.camera
         if cam is None:
             sv["Camera"].set("not running")
+            sv["Video"].set("-")
         elif cam.error:
             sv["Camera"].set("ERROR (see log)")
         else:
-            sv["Camera"].set(f"{cam.name[:24]}  {cam.width}x{cam.height}  {cam.measured_fps():.1f}/{cam.fps} fps")
+            sv["Camera"].set(cam.name)
+            sv["Video"].set(f"{cam.width}x{cam.height}  {cam.measured_fps():.1f}/{cam.fps} fps")
 
         s = self.session
         if s and s.state == "recording":
