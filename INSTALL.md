@@ -86,46 +86,50 @@ No programming knowledge needed. Plan on about 30 minutes and an internet connec
 
 ## No password method
 
-Use this if double-clicking a `.command` file asks for an **administrator password** (common on macOS 15 Sequoia for downloaded files). Starting the files from Terminal avoids that check, so no password is needed.
+Use this if double-clicking a `.command` file asks for an **administrator password** (common on macOS 15 Sequoia for downloaded files). Starting the files from Terminal with `bash` avoids that check, so no password is needed.
 
-### 1. Open Terminal
+### 1. Install Anaconda
+- Same as **Step 2** above. If it's already installed, skip this step.
+
+### 2. Get the program folder
+- Same as **Step 3** above: download the ZIP, unzip it, and put the **ASR** folder on your Desktop.
+
+### 3. Open Terminal
 - Press ⌘ + Space, type **Terminal**, and press Return.
 
-### 2. Go to the ASR folder
-- Type `cd` followed by **one space**. Don't press Return yet.
-- Drag the **ASR** folder from Finder into the Terminal window. Its location appears after `cd `, for example:
+### 4. Run the installer
+- Type `bash` followed by **one space**. Don't press Return yet.
+- Open the **ASR** folder in Finder and **drag `Setup_Environment.command` into the Terminal window**. Its location appears after `bash `, for example:
   ```
-  cd /Users/yourname/Desktop/ASR
+  bash /Users/yourname/Desktop/ASR/Setup_Environment.command
   ```
-- Press **Return**. Terminal is now "inside" the ASR folder.
-- To check, type `ls` and press Return. You should see `ASR_Startle.command`, `Setup_Environment.command` and the other files.
+- Press **Return**.
 
-### 3. Run the one-time setup
-- Type `./` followed by the file name, then press Return:
-  ```
-  ./Setup_Environment.command
-  ```
-  - `./` means "the file in this folder".
-  - Tip: type `./Set` and press **Tab**, and Terminal fills in the rest of the name.
-- Wait for **"Done. Press Return to close."**, then press Return.
+### 5. Wait for "Done"
+- Setup takes 5–15 minutes. When it says **"Done. Press Return to close."**, press Return.
 
-### 4. Start the program
-- In the same Terminal window, type:
-  ```
-  ./ASR_Startle.command
-  ```
-- Keep the Terminal window open while you use the program. Then continue with Steps 7 and 8 above.
+### 6. Open the program the same way
+- Type `bash` and **one space**, drag **`ASR_Startle.command`** into the Terminal window, and press **Return**.
+- Keep the Terminal window open while you use the program. Then continue with **Steps 7 and 8** above (camera/microphone permission and first-time settings).
 
 ### Every time after that
-- Open Terminal, type `cd ` and drag in the **ASR** folder, press Return, then type `./ASR_Startle.command` and press Return.
+Use these steps whenever you start the program again, including after closing it, logging out, or restarting the Mac. **You don't need to open Anaconda or run the installer again**; `ASR_Startle.command` switches on everything it needs by itself.
+
+1. **Plug in the equipment first**: camera, USB microphone, and the amplifier cable in the headphone jack.
+2. **Open Terminal.**
+3. **Type `bash` and one space, drag in `ASR_Startle.command`, and press Return.**
+
+**Important**
+- The **space after `bash`** is required before you drag the file in.
+- Drag the **file** (`ASR_Startle.command`), not the ASR folder.
+- **Leave the Terminal window open** while you use the program. Closing it quits the program.
+- Close the program with the red button on its own window. Your settings, calibration and experimenter names are kept.
+- Run the installer (`Setup_Environment.command`) again only after installing a newer version of the program.
 
 ### If something goes wrong
-- **"Permission denied":** type `bash` and a space before the file name, for example `bash ./ASR_Startle.command`.
-- **"No such file or directory":** Terminal isn't in the ASR folder. Repeat step 2, making sure there's a space after `cd`.
+- **"No such file or directory":** the space after `bash` was missing, or the file was moved. Try again, dragging the file from the ASR folder.
+- **"is a directory":** you dragged the ASR folder instead of the file inside it.
 
 ### Optional: make double-clicking work without a password
-- While Terminal is in the ASR folder (step 2), type this and press Return:
-  ```
-  xattr -dr com.apple.quarantine .
-  ```
+- In Terminal, type `xattr -dr com.apple.quarantine` and **one space**, drag the **ASR folder** into the window, and press Return.
 - This removes macOS's "downloaded from the internet" flag from the program's files, so double-clicking them works normally. It only changes files you own, so no password is needed.

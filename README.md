@@ -31,14 +31,13 @@ out, or restarting the Mac. **You never need to open Anaconda or run `Setup_Envi
 
 **Method 2: Terminal (no password)**
 - Open **Terminal** (⌘ + Space, type *Terminal*, press Return).
-- Type `cd`, a space, then **drag the ASR folder** into the window and press Return.
-- Type `./ASR_Startle.command` and press Return.
+- Type `bash`, a space, then **drag `ASR_Startle.command`** from the ASR folder into the window and press Return.
 - Important:
-  - Put a **space after `cd`** before dragging the folder in.
-  - Start the file name with **`./`** ("this folder"). Tip: type `./ASR` and press **Tab** to fill in the rest.
-  - "No such file or directory" means Terminal isn't in the ASR folder; repeat the `cd` step.
-  - "Permission denied": type `bash ./ASR_Startle.command` instead.
+  - Put a **space after `bash`** before dragging the file in.
+  - Drag the **file** `ASR_Startle.command`, not the ASR folder ("is a directory" means the folder was dragged).
+  - "No such file or directory" means the space was missing or the file was moved; try again.
   - **Leave the Terminal window open** while the program runs.
+  - The first-time installer runs the same way: `bash`, a space, drag in `Setup_Environment.command`.
 
 **Both methods**
 - Plug in the camera, USB microphone and amplifier **before** starting. If you plug the camera in later,
