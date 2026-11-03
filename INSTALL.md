@@ -28,6 +28,7 @@ No programming knowledge needed. Plan on about 30 minutes and an internet connec
 - Open the **ASR** folder and **right-click** (or Control-click) **Setup_Environment.command**, then choose **Open**.
   - The first time, macOS warns that the file is "from an unidentified developer". Click **Open**.
   - If there's no Open button, go to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** next to the file's name, and try again.
+  - **Asked for an administrator password?** Use the **[No password method](#no-password-method)** at the end of this guide instead.
 - A Terminal window opens and downloads everything the program needs. This takes 5–15 minutes.
 - When it says **"Done. Press Return to close."**, press Return.
 
@@ -80,3 +81,51 @@ No programming knowledge needed. Plan on about 30 minutes and an internet connec
   - **config**: your calibration, camera settings and experimenter names.
   - **Data**: your recorded sessions (unless you save them somewhere else).
 - Run **Setup_Environment.command** again (Step 4) in case anything the program needs has changed.
+
+---
+
+## No password method
+
+Use this if double-clicking a `.command` file asks for an **administrator password** (common on macOS 15 Sequoia for downloaded files). Starting the files from Terminal avoids that check, so no password is needed.
+
+### 1. Open Terminal
+- Press ⌘ + Space, type **Terminal**, and press Return.
+
+### 2. Go to the ASR folder
+- Type `cd` followed by **one space**. Don't press Return yet.
+- Drag the **ASR** folder from Finder into the Terminal window. Its location appears after `cd `, for example:
+  ```
+  cd /Users/yourname/Desktop/ASR
+  ```
+- Press **Return**. Terminal is now "inside" the ASR folder.
+- To check, type `ls` and press Return. You should see `ASR_Startle.command`, `Setup_Environment.command` and the other files.
+
+### 3. Run the one-time setup
+- Type `./` followed by the file name, then press Return:
+  ```
+  ./Setup_Environment.command
+  ```
+  - `./` means "the file in this folder".
+  - Tip: type `./Set` and press **Tab**, and Terminal fills in the rest of the name.
+- Wait for **"Done. Press Return to close."**, then press Return.
+
+### 4. Start the program
+- In the same Terminal window, type:
+  ```
+  ./ASR_Startle.command
+  ```
+- Keep the Terminal window open while you use the program. Then continue with Steps 7 and 8 above.
+
+### Every time after that
+- Open Terminal, type `cd ` and drag in the **ASR** folder, press Return, then type `./ASR_Startle.command` and press Return.
+
+### If something goes wrong
+- **"Permission denied":** type `bash` and a space before the file name, for example `bash ./ASR_Startle.command`.
+- **"No such file or directory":** Terminal isn't in the ASR folder. Repeat step 2, making sure there's a space after `cd`.
+
+### Optional: make double-clicking work without a password
+- While Terminal is in the ASR folder (step 2), type this and press Return:
+  ```
+  xattr -dr com.apple.quarantine .
+  ```
+- This removes macOS's "downloaded from the internet" flag from the program's files, so double-clicking them works normally. It only changes files you own, so no password is needed.
