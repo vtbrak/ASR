@@ -6,6 +6,22 @@ No programming knowledge needed. Plan on about 30 minutes and an internet connec
 
 ---
 
+## Quick install
+
+For a Mac that already has Anaconda and the ASR folder:
+
+1. Double-click **`Setup_Environment.command`** (creates the `asr` Anaconda environment, a few minutes).
+   - If macOS blocks it, right-click > Open. If it asks for an administrator password, use the **[No password method](#no-password-method)** instead.
+2. Double-click **`ASR_Startle.command`** to start the program.
+3. The first time, macOS asks for **Camera** and **Microphone** access for Terminal. Allow both, then
+   quit and restart the program. (System Settings > Privacy & Security > Camera / Microphone.)
+
+From a terminal instead: `conda activate asr && python -m asr_app`.
+
+Starting from scratch? Follow the full steps below.
+
+---
+
 ## Step 1. Check which kind of Mac you have
 - Click the Apple menu () in the top-left corner, then **About This Mac**.
 - If it says **Chip: Apple M1/M2/M3/M4…**, you have an **Apple Silicon** Mac.

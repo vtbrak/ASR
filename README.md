@@ -5,17 +5,15 @@ grayscale video from a USB camera, raised-cosine tone bursts through the headpho
 (to an amplifier and speaker), constant background white noise, and a microphone track used to
 check sync. Every stimulus is logged with the video frame it occurred in.
 
-## First-time setup
+## Installing
 
-New to this? Follow the step-by-step guide in **[INSTALL.md](INSTALL.md)**. The short version:
+Everything about installing is in **[INSTALL.md](INSTALL.md)**:
 
-1. Double-click **`Setup_Environment.command`** (creates the `asr` Anaconda environment, a few minutes).
-   If macOS blocks it, right-click > Open.
-2. Double-click **`ASR_Startle.command`** to start the program.
-3. The first time, macOS asks for **Camera** and **Microphone** access for Terminal. Allow both, then
-   quit and restart the program. (System Settings > Privacy & Security > Camera / Microphone.)
-
-From a terminal instead: `conda activate asr && python -m asr_app`.
+- [Quick install](INSTALL.md#quick-install): three steps for a Mac that already has Anaconda
+- [Full step-by-step install](INSTALL.md#step-1-check-which-kind-of-mac-you-have): Anaconda, downloading the program, permissions, first-time settings
+- [No password method](INSTALL.md#no-password-method): install and start from Terminal (`bash` + drag the file) when macOS asks for an administrator password
+- [Installing a newer version](INSTALL.md#installing-a-newer-version-later): update without losing calibration, settings or data
+- [Troubleshooting](INSTALL.md#troubleshooting)
 
 ## Starting the program each time
 
