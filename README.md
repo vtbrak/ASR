@@ -1,4 +1,4 @@
-# ASR Recorder
+# Boom Box
 
 Records acoustic startle response (ASR) and prepulse inhibition (PPI) sessions in mice on a Mac:
 grayscale video from a USB camera, raised-cosine tone bursts through the headphone jack
@@ -18,31 +18,31 @@ Everything about installing is in **[INSTALL.md](INSTALL.md)**:
 ## Starting the program each time
 
 After the first-time setup, use either method below. That includes after closing the program, logging
-out, or restarting the Mac. **You never need to open Anaconda or run `Setup_Environment.command` again**;
-`ASR_Startle.command` switches on the program's environment by itself every time.
+out, or restarting the Mac. **You never need to open Anaconda or run `Boom_Box_Setup.command` again**;
+`Boom_Box.command` switches on the program's environment by itself every time.
 
 **Method 1: Double-click**
-- Double-click **`ASR_Startle.command`** in the ASR folder (or its Dock icon, if you added one).
+- Double-click **`Boom_Box.command`** in the BoomBox folder (or its Dock icon, if you added one).
 - Important:
   - If macOS asks for an **administrator password**, cancel and use Method 2 instead.
   - A Terminal window opens first. **Leave it open**; closing it quits the program.
 
 **Method 2: Terminal (no password)**
 - Open **Terminal** (⌘ + Space, type *Terminal*, press Return).
-- Type `bash`, a space, then **drag `ASR_Startle.command`** from the ASR folder into the window and press Return.
+- Type `bash`, a space, then **drag `Boom_Box.command`** from the BoomBox folder into the window and press Return.
 - Important:
   - Put a **space after `bash`** before dragging the file in.
-  - Drag the **file** `ASR_Startle.command`, not the ASR folder ("is a directory" means the folder was dragged).
+  - Drag the **file** `Boom_Box.command`, not the BoomBox folder ("is a directory" means the folder was dragged).
   - "No such file or directory" means the space was missing or the file was moved; try again.
   - **Leave the Terminal window open** while the program runs.
-  - The first-time installer runs the same way: `bash`, a space, drag in `Setup_Environment.command`.
+  - The first-time installer runs the same way: `bash`, a space, drag in `Boom_Box_Setup.command`.
 
 **Both methods**
 - Plug in the camera, USB microphone and amplifier **before** starting. If you plug the camera in later,
   click **Refresh list** on the Camera tab, then **Apply / restart camera**.
 - Close the program with its own window (the red button). Saved settings, calibration and experimenter
   names are kept for next time.
-- Only run `Setup_Environment.command` again after installing a newer version of the program, or if
+- Only run `Boom_Box_Setup.command` again after installing a newer version of the program, or if
   the program stops starting because something is missing.
 
 ## Before each day

@@ -323,7 +323,7 @@ class Session:
         vol, muted = macsys.output_volume()
         cam = self.camera
         data = {
-            "software": f"ASR Recorder {__version__}",
+            "software": f"Boom Box {__version__}",
             "started_at": self.started_at,
             "experimenter": self.meta["experimenter"],
             "animal": {k: v for k, v in self.meta.items() if k != "experimenter"},
@@ -357,6 +357,6 @@ class Session:
 
     def _write_events_log(self):
         with open(self.folder / f"{self.base}_events.log", "w") as f:
-            f.write(f"ASR Recorder {__version__}  session {self.base}\n")
+            f.write(f"Boom Box {__version__}  session {self.base}\n")
             f.write(f"Experimenter: {self.meta['experimenter']}   Animal: {self.meta['animal_id']}\n\n")
             f.write("\n".join(self.events_log) + "\n")

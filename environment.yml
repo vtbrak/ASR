@@ -1,4 +1,4 @@
-name: asr
+name: boombox
 channels:
   - conda-forge
 dependencies:

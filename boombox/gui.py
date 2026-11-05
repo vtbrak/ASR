@@ -1,4 +1,4 @@
-"""Tkinter interface for the ASR recorder."""
+"""Tkinter interface for Boom Box."""
 
 import copy
 import datetime as dt
@@ -92,7 +92,7 @@ class ScrollFrame(ttk.Frame):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(f"ASR Recorder {__version__}")
+        root.title(f"Boom Box {__version__}")
         config.ensure_dirs()
         protocols.ensure_builtin()
         self.settings = config.load_settings()
@@ -1557,7 +1557,7 @@ def main():
     try:
         App(root)
     except Exception:
-        messagebox.showerror("ASR Recorder", traceback.format_exc())
+        messagebox.showerror("Boom Box", traceback.format_exc())
         raise
     root.mainloop()
 
