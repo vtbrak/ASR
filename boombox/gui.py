@@ -3,6 +3,7 @@
 import copy
 import datetime as dt
 import queue
+import re
 import sys
 import threading
 import time
@@ -24,6 +25,7 @@ IS_WINDOWS = sys.platform == "win32"
 UI_FONT = "Segoe UI" if IS_WINDOWS else "Helvetica"
 MONO_FONT = "Consolas" if IS_WINDOWS else "Menlo"
 VOLUME_LABEL = sysutil.VOLUME_LABEL
+NAME_PART_RE = re.compile(r"[A-Za-z0-9-]+")   # arena / camera label rule from the metadata standard
 PREVIEW_W, PREVIEW_H = 640, 360
 PREVIEW_MIN_W = 240
 LEFT_MIN_W = 480
@@ -271,17 +273,19 @@ class App:
         self._refresh_experimenters()
 
         self.animal_vars = {}
-        fields = [("animal_id", "Animal ID *"), ("sex", "Sex"), ("genotype", "Genotype"),
-                  ("age", "Age"), ("weight_g", "Weight (g)"), ("treatment", "Treatment"),
-                  ("notes", "Notes")]
+        # Field names follow the Track Tamer metadata standard (they go into _info.json).
+        fields = [("animal_id", "Animal ID *"), ("sex", "Sex (F / M / U)"), ("strain", "Strain"),
+                  ("dob", "Date of birth (YYYY-MM-DD)"), ("cohort", "Cohort / litter"),
+                  ("treatment", "Treatment"), ("trial_day", "Trial day (1, 2, ...)"),
+                  ("session_number", "Session number that day"), ("notes", "Notes")]
         for i, (key, label) in enumerate(fields, start=1):
             ttk.Label(f, text=label).grid(row=i, column=0, sticky="w")
-            v = tk.StringVar()
+            v = tk.StringVar(value="U" if key == "sex" else "")
             if key == "sex":
-                w = ttk.Combobox(f, textvariable=v, values=["", "Male", "Female", "Unknown"],
-                                 state="readonly", width=12)
+                w = ttk.Combobox(f, textvariable=v, values=["F", "M", "U"], state="readonly", width=6)
             else:
-                w = ttk.Entry(f, textvariable=v, width=12 if key == "notes" else 26)
+                w = ttk.Entry(f, textvariable=v, width=12 if key == "notes" else
+                              (8 if key in ("trial_day", "session_number") else 26))
             # Notes stretches with the pane (and shrinks back) instead of forcing a scrollbar.
             w.grid(row=i, column=1, sticky="ew" if key == "notes" else "w", pady=2)
             self.animal_vars[key] = v
@@ -504,6 +508,15 @@ class App:
         self.var_keep_noise = tk.BooleanVar(value=self.settings["keep_noise_after_session"])
         row("", ttk.Checkbutton(f, text="Keep background noise on after a session ends",
                                 variable=self.var_keep_noise))
+
+        ttk.Label(f, text="This rig (used in file names and the info file)", style="Header.TLabel").grid(
+            row=r, column=0, columnspan=2, sticky="w", pady=(12, 0)); r += 1
+        self.var_arena = tk.StringVar(value=self.settings["arena"])
+        row("Arena (letters, digits, - only)", ttk.Entry(f, textvariable=self.var_arena, width=12))
+        self.var_room = tk.StringVar(value=self.settings["room"])
+        row("Room", ttk.Entry(f, textvariable=self.var_room, width=20))
+        self.var_camera_label = tk.StringVar(value=self.settings["camera_label"])
+        row("Camera label (letters, digits, - only)", ttk.Entry(f, textvariable=self.var_camera_label, width=12))
 
         ttk.Label(f, text="Session", style="Header.TLabel").grid(row=r, column=0, sticky="w", pady=(12, 0)); r += 1
         self.var_countdown = tk.StringVar(value=str(self.settings["countdown_s"]))
@@ -934,6 +947,8 @@ class App:
         self._field(g, 2, 0, "Background noise (dB SPL, blank = off)", ("background_noise_db",),
                     p.get("background_noise_db"), kind="opt_float")
         self._field(g, 2, 2, "Record after last tone (s)", ("end_padding_s",), p.get("end_padding_s", 30))
+        self._field(g, 3, 0, "Assay variant (blank = plain startle)", ("assay_variant",),
+                    p.get("assay_variant", ""), kind="str", width=18, values=protocols.ASSAY_VARIANTS)
 
         tf = ttk.LabelFrame(e, text="Tones: one per line  'time (s), frequency (kHz)'", padding=6)
         tf.grid(row=0, column=1, rowspan=2, sticky="nw", padx=10)
@@ -972,6 +987,9 @@ class App:
         self._field(gen, 5, 0, "Randomize order", ("randomize",), "yes" if p["randomize"] else "no",
                     kind="bool", values=["yes", "no"])
         self._field(gen, 6, 0, "Random seed (blank = new each run)", ("seed",), p.get("seed"), kind="opt_int")
+        self._field(gen, 7, 0, "Assay variant", ("assay_variant",),
+                    p.get("assay_variant", "Prepulse Inhibition"), kind="str", width=18,
+                    values=protocols.ASSAY_VARIANTS)
 
         pu = ttk.LabelFrame(e, text="Pulse (startle)", padding=6)
         pu.grid(row=0, column=1, sticky="nw", padx=8)
@@ -1348,6 +1366,21 @@ class App:
             errors.append("Choose the experimenter.")
         if not self.animal_vars["animal_id"].get().strip():
             errors.append("Enter the Animal ID.")
+        dob = self.animal_vars["dob"].get().strip()
+        if dob:
+            try:
+                dt.date.fromisoformat(dob)
+            except ValueError:
+                errors.append("Date of birth must be written YYYY-MM-DD (e.g. 2026-08-15).")
+        for key, label in (("trial_day", "Trial day"), ("session_number", "Session number")):
+            val = self.animal_vars[key].get().strip()
+            if val and not (val.isdigit() and int(val) >= 1):
+                errors.append(f"{label} must be a whole number (1, 2, ...).")
+        for key in ("arena", "camera_label"):
+            if not NAME_PART_RE.fullmatch(self.settings.get(key, "")):
+                errors.append("Set the Arena and Camera label on the Settings tab "
+                              "(letters, digits and - only).")
+                break
         if not self.engine or not self.engine.running:
             errors.append("Sound output is not running (see Settings).")
         cam = self.camera
@@ -1492,7 +1525,8 @@ class App:
         if self.busy():
             return
         for k, v in self.animal_vars.items():
-            v.set("")
+            if k not in ("cohort", "trial_day"):       # usually the same for the next animal
+                v.set("U" if k == "sex" else "")
         self.session = None
         self.btn_next.configure(state="disabled")
         self.btn_start.configure(state="normal")
@@ -1599,8 +1633,15 @@ class App:
         if self.busy():
             messagebox.showwarning("Settings", "Can't change settings during a session.")
             return
+        arena, label = self.var_arena.get().strip(), self.var_camera_label.get().strip()
+        for what, val in (("Arena", arena), ("Camera label", label)):
+            if not NAME_PART_RE.fullmatch(val):
+                messagebox.showerror("Settings", f"{what} may use only letters, digits and - "
+                                                 "(no spaces or _), e.g. ASR1 or Side.")
+                return
         try:
             self.settings.update(
+                arena=arena, room=self.var_room.get().strip(), camera_label=label,
                 output_device="" if self.var_out_dev.get() == SYSTEM_DEFAULT else self.var_out_dev.get(),
                 channel_mode=self.var_channel.get(),
                 sample_rate=int(self.var_rate.get()),

@@ -1,6 +1,7 @@
 {
   "name": "PPI Default",
   "type": "ppi",
+  "assay_variant": "Prepulse Inhibition",
   "background_noise_db": 65.0,
   "acclimation_s": 300.0,
   "end_padding_s": 30.0,

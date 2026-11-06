@@ -35,6 +35,10 @@ DEFAULT_SETTINGS = {
     "camera_controls_locked": False,
     "video_crf": 18,
     "video_preset": "veryfast",
+    # Track Tamer metadata (set once per rig)
+    "arena": "ASR1",
+    "room": "",
+    "camera_label": "Side",
     # Session
     "countdown_s": 5,
     "calibration_max_age_days": 30,

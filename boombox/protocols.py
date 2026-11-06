@@ -23,10 +23,16 @@ BUILTIN_ASR_NAME = "ASR Standard"
 ASR_TIMES_S = [120, 157, 185, 218, 248, 260, 291, 334, 353, 388, 419, 458, 486, 515, 530]
 ASR_FREQS_KHZ = [12, 4, 16, 20, 8, 4, 20, 16, 12, 8, 8, 16, 4, 20, 12]
 
+# Track Tamer metadata standard: assay is always Acoustic Startle Response;
+# the variant comes from the protocol ("" = plain startle, left out of the info file).
+ASSAY = "Acoustic Startle Response"
+ASSAY_VARIANTS = ["", "Prepulse Inhibition", "Startle Habituation"]
+
 BUILTIN_ASR = {
     "name": BUILTIN_ASR_NAME,
     "type": "list",
     "builtin": True,
+    "assay_variant": "",
     "startle": {"stimulus": "tone", "level_db": 105.0,
                 "rise_ms": 5.0, "plateau_ms": 0.0, "fall_ms": 5.0},
     "background_noise_db": 65.0,
@@ -37,6 +43,7 @@ BUILTIN_ASR = {
 DEFAULT_LIST = {
     "name": "Custom list",
     "type": "list",
+    "assay_variant": "",
     "startle": {"stimulus": "tone", "level_db": 105.0,
                 "rise_ms": 5.0, "plateau_ms": 0.0, "fall_ms": 5.0},
     "background_noise_db": 65.0,
@@ -47,6 +54,7 @@ DEFAULT_LIST = {
 DEFAULT_PPI = {
     "name": "PPI Default",
     "type": "ppi",
+    "assay_variant": "Prepulse Inhibition",
     "background_noise_db": 65.0,
     "acclimation_s": 300.0,
     "end_padding_s": 30.0,

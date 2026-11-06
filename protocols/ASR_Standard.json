@@ -2,6 +2,7 @@
   "name": "ASR Standard",
   "type": "list",
   "builtin": true,
+  "assay_variant": "",
   "startle": {
     "stimulus": "tone",
     "level_db": 105.0,

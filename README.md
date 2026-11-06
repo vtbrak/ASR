@@ -92,7 +92,8 @@ measure it (for example, film an LED that the program flashes or a hand clap the
 
 ## Running a session (Session tab)
 
-1. Choose the experimenter (*Add a name* the first time), enter the Animal ID and other details,
+1. Choose the experimenter (*Add a name* the first time), enter the Animal ID and other details
+   (sex F/M/U, strain, date of birth, cohort / litter, treatment, trial day, session number),
    choose the protocol.
 2. Optionally press **Start background noise** for acclimation before recording.
 3. **START SESSION**: a checklist of warnings appears, then a 5 s countdown. Frame 0 of the video is
@@ -103,20 +104,28 @@ measure it (for example, film an LED that the program flashes or a hand clap the
 
 ## Output files
 
-Each session gets a folder `Data/YYYYMMDD_HHMMSS_AnimalID_Protocol/`:
+Files follow the **Track Tamer video metadata standard** (schema 1), so Track Tamer can read each
+session's information automatically. Each session gets a folder
+`Data/<date>_<time>_<arena>_<AnimalID>/`, and its files start with `<date>_<time>_<arena>`
+(e.g. `2026-11-06_15-30-00_ASR1`). The arena (`ASR1`) and camera label (`Side`) are set once per rig
+on the **Settings** tab, using letters, digits and `-` only.
 
 | File | Contents |
 |---|---|
-| `<name>.mp4` | Grayscale H.264 video with the microphone as its audio track |
-| `<name>_audio.wav` | Microphone audio, aligned so sample 0 = video frame 0 (full bandwidth) |
-| `<name>_trials.csv` | One row per trial: scheduled and actual times (ms), video frame, level, dBFS, calibration status, mic-measured onset and frame, experimenter, animal |
-| `<name>_frames.csv` | Time (ms) of every video frame; `repeated_dropped_frame = 1` marks frames repeated because the camera dropped one |
-| `<name>_session.json` | Everything else: experimenter, animal details, protocol, schedule, calibration, camera settings, dropped-frame gaps, audio settings |
-| `<name>_events.log` | Readable timeline |
+| `…_ASR1_Side.mp4` | Grayscale H.264 video with the microphone as its audio track |
+| `…_ASR1_info.json` | **Trial information for Track Tamer:** date, start time, assay (`Acoustic Startle Response`) and variant, arena, room, experimenter, animal details, session length, the camera entry (video name, frame counts, repeated frames, all camera settings) and the `stimuli` list. Boom Box's own details (protocol, schedule, per-trial timing, calibration, audio settings) are inside its `boom_box` section. |
+| `…_ASR1_info.csv` | The same trial fields as one spreadsheet row, for people |
+| `…_ASR1_Side_frames.csv` | Measured time of every video frame: `frame`, `video_time_s`, `repeated` (true for frames repeated because the camera dropped one). This is the record of timing. |
+| `…_ASR1_trials.csv` | Boom Box's detail, one row per trial: scheduled and actual times (ms), video frame, frequency, level, dBFS, calibration status, mic-measured onset and frame |
+| `…_ASR1_Side_audio.wav` | Microphone audio, aligned so sample 0 = video frame 0 (full bandwidth) |
+| `…_ASR1_events.log` | Readable timeline |
 
-Frames are numbered from 0. Times are in milliseconds from the start of frame 0.
-`pulse_frame` is the frame being exposed when the sound left the computer; `pulse_mic_frame` is the
-frame when the microphone heard it.
+Frames are numbered from 0. In the trials file, times are in milliseconds from the start of frame 0;
+in the info and frames files they're in seconds. `pulse_frame` is the frame being exposed when the
+sound left the computer; `pulse_mic_frame` is the frame when the microphone heard it.
+
+**Assay variant:** set per protocol on the Protocol tab: blank for a plain startle session,
+`Prepulse Inhibition` (the default for PPI protocols) or `Startle Habituation`.
 
 ## Timing notes
 

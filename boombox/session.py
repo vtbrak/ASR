@@ -1,16 +1,20 @@
 """One recording session: schedules stimuli against video frame 0 and writes all logs.
 
-Output folder  <data_dir>/<YYYYMMDD_HHMMSS>_<AnimalID>_<Protocol>/  containing
-  <base>.mp4          grayscale video with the microphone as its audio track
-  <base>_audio.wav    microphone audio aligned so sample 0 = video frame 0
-  <base>_trials.csv   one row per trial (times in ms from frame 0, frames 0-based)
-  <base>_frames.csv   timestamp of every video frame, repeated frames flagged
-  <base>_session.json experimenter, animal, protocol, schedule, calibration, camera settings
-  <base>_events.log   readable timeline of the session
+Files follow the Track Tamer video metadata standard (schema 1). With
+<base> = <date>_<time>_<arena> (e.g. 2026-11-06_15-30-00_ASR1) and <label> the
+camera label, each session folder <data_dir>/<base>_<AnimalID>/ holds:
+  <base>_<label>.mp4         grayscale video with the microphone as its audio track
+  <base>_info.json           trial information (the file Track Tamer reads)
+  <base>_info.csv            the same trial fields as one spreadsheet row
+  <base>_<label>_frames.csv  measured time of every video frame (the record of timing)
+  <base>_trials.csv          Boom Box's per-trial detail (times in ms from frame 0)
+  <base>_<label>_audio.wav   microphone audio aligned so sample 0 = video frame 0
+  <base>_events.log          readable timeline of the session
 """
 
 import csv
 import datetime as dt
+import io
 import json
 import os
 import re
@@ -23,12 +27,43 @@ import soundfile as sf
 
 from . import __version__, calibration, sysutil
 from .audio import MicRecorder
-from .camera import _NO_WINDOW, VideoRecorder, ffmpeg_path
+from .camera import _NO_WINDOW, IS_WINDOWS, VideoRecorder, ffmpeg_path
+from .protocols import ASSAY
 from .stimuli import make_stimulus
+
+SCHEMA_VERSION = 1
+APP_KEY = "boom_box"   # Boom Box's own fields live in this object of the info file
+STIMULUS_TYPES = {"startle": "pulse", "pulse_alone": "pulse", "prepulse_pulse": "prepulse+pulse",
+                  "prepulse_alone": "prepulse", "no_stim": "none"}
 
 
 def _safe(s):
     return re.sub(r"[^A-Za-z0-9_-]+", "-", str(s)).strip("-") or "NA"
+
+
+def _clean(d):
+    """Drop unknown fields: the standard says leave them out rather than write "" or null."""
+    return {k: v for k, v in d.items() if v is not None and v != "" and v != [] and v != {}}
+
+
+def _write_atomic(path, text):
+    """Write in one go (temporary name, then rename) so a crash never leaves half a file."""
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _count_video_frames(path):
+    """Frames actually in the finished MP4 (ffprobe), or None if it can't be counted."""
+    ffprobe = Path(ffmpeg_path()).with_name("ffprobe.exe" if IS_WINDOWS else "ffprobe")
+    try:
+        out = subprocess.run([str(ffprobe), "-v", "error", "-select_streams", "v:0", "-count_packets",
+                              "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+                             capture_output=True, text=True, timeout=120, **_NO_WINDOW).stdout
+        return int(out.strip().split(",")[0])
+    except Exception:
+        return None
 
 
 class Session:
@@ -47,10 +82,11 @@ class Session:
         self.stopped_early = False
         self.result_text = ""
 
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.base = f"{stamp}_{_safe(meta['animal_id'])}_{_safe(protocol['name'])}"
-        self.folder = Path(settings["data_dir"]) / self.base
-        self.started_at = dt.datetime.now().isoformat(timespec="seconds")
+        self.arena = settings["arena"]
+        self.camera_label = settings["camera_label"]
+        self.start_dt = dt.datetime.now()     # replaced by the clock time of video frame 0
+        self.base = f"{self.start_dt:%Y-%m-%d_%H-%M-%S}_{self.arena}"
+        self.folder = Path(settings["data_dir"]) / f"{self.base}_{_safe(meta['animal_id'])}"
 
     # -- logging ---------------------------------------------------------
     def log(self, msg):
@@ -103,6 +139,9 @@ class Session:
                 raise RuntimeError("No frames from the camera; recording not started.")
             time.sleep(0.005)
         self.t0 = self.recorder.t0
+        # Date and start time come from this computer's clock at video frame 0.
+        self.start_dt = dt.datetime.now() - dt.timedelta(seconds=time.perf_counter() - self.t0)
+        self.base = f"{self.start_dt:%Y-%m-%d_%H-%M-%S}_{self.arena}"
         self.state = "recording"
         self.log(f"Recording started (frame 0). {cam.width}x{cam.height} @ {cam.fps} fps, "
                  f"{len(self.trials)} trials, {self.total_s:.1f} s")
@@ -180,8 +219,11 @@ class Session:
                                    f"({g['time_s'] * 1000:.1f} ms)")
 
         video_tmp = self.folder / "_video.mp4"
-        video_final = self.folder / f"{self.base}.mp4"
-        audio_final = self.folder / f"{self.base}_audio.wav"
+        self.video_name = f"{self.base}_{self.camera_label}.mp4"
+        self.frames_name = f"{self.base}_{self.camera_label}_frames.csv"
+        self.audio_name = f"{self.base}_{self.camera_label}_audio.wav"
+        video_final = self.folder / self.video_name
+        audio_final = self.folder / self.audio_name
         mic_fit = None
         if self.mic and self.mic.n_samples > 0:
             mic_fit = self.mic.clock_fit()
@@ -198,13 +240,18 @@ class Session:
                 os.replace(video_tmp, video_final)
         else:
             os.replace(video_tmp, video_final)
+        self.verified_frames = _count_video_frames(video_final)
+        if self.verified_frames is not None and self.verified_frames != rec.n_frames:
+            self.log(f"WARNING: the video file has {self.verified_frames} frames but {rec.n_frames} were written.")
 
         rows = self._trial_rows(mic_fit)
         self._write_trials_csv(rows)
         self._write_frames_csv()
         if self.mic and (self.folder / "_mic_raw.wav").exists():
             (self.folder / "_mic_raw.wav").unlink()
-        self._write_session_json(rows)
+        info = self._info(rows)
+        self._write_info_json(info)
+        self._write_info_csv(info)
         self._write_events_log()
 
         n_played = sum(1 for _, _, ev, _, _ in self.stim_events if ev.actual_perf)
@@ -312,35 +359,87 @@ class Session:
 
     def _write_frames_csv(self):
         rec = self.recorder
-        with open(self.folder / f"{self.base}_frames.csv", "w", newline="") as f:
+        with open(self.folder / self.frames_name, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["frame", "time_ms", "repeated_dropped_frame"])
+            w.writerow(["frame", "video_time_s", "repeated"])
             for i, (t, d) in enumerate(zip(rec.frame_times, rec.duplicated)):
-                w.writerow([i, round((t - self.t0) * 1000, 3), d])
+                w.writerow([i, f"{t - self.t0:.6f}", "true" if d else "false"])
 
-    def _write_session_json(self, rows):
+    # -- Track Tamer info file ---------------------------------------------------
+    def _stimuli(self):
+        """Draft `stimuli` list of the standard: one entry per trial that happened."""
+        by_key = {(i, role): ev for i, role, ev, _, _ in self.stim_events}
         rec = self.recorder
+        end = rec.frame_times[-1] + rec.period
+        out = []
+        for i, tr in enumerate(self.trials):
+            played = {role: by_key[(i, role)].actual_perf for role in ("pulse", "prepulse")
+                      if tr.get(role) and by_key[(i, role)].actual_perf is not None}
+            if tr.get("pulse") or tr.get("prepulse"):
+                if not played:
+                    continue                       # not reached (session stopped early)
+                t = played.get("pulse", played.get("prepulse"))
+            else:
+                t = self.t0 + tr["ref_time_s"]     # no-stimulus trial: its scheduled time
+                if t > end:
+                    continue
+            out.append(_clean({
+                "frame": rec.frame_at(t),
+                "video_time_s": round(t - self.t0, 6),
+                "type": STIMULUS_TYPES[tr["type"]],
+                "pulse_db": tr["pulse"]["level_db"] if tr.get("pulse") else None,
+                "prepulse_db": tr["prepulse"]["level_db"] if tr.get("prepulse") else None,
+                "interval_ms": tr["lead_ms"] if tr["type"] == "prepulse_pulse" else None,
+            }))
+        return out
+
+    def _camera_entry(self):
+        rec, cam = self.recorder, self.camera
+        times = rec.frame_times
+        fps_measured = ((len(times) - 1) / (times[-1] - times[0])
+                        if len(times) > 1 and times[-1] > times[0] else None)
+        settings = {
+            "encoder": "libx264", "crf": self.settings["video_crf"],
+            "encoder_preset": self.settings["video_preset"], "pixel_format": "yuv420p",
+            "color": "grayscale", "width_px": cam.width, "height_px": cam.height, "fps": cam.fps,
+            "camera_latency_ms": cam.latency_s * 1000,
+            "controls_locked": bool(self.settings.get("camera_controls_locked")),
+            "controls": self.uvc_values or {},
+        }
+        return _clean({
+            "label": self.camera_label,
+            "camera_position": cam.name,
+            "camera_settings": settings,
+            "video": self.video_name,
+            "timestamps_csv": self.frames_name,
+            "fps_set": cam.fps,
+            "fps_measured": None if fps_measured is None else round(fps_measured, 3),
+            "width_px": cam.width,
+            "height_px": cam.height,
+            "frames": rec.n_frames,
+            "verified_frames_in_file": self.verified_frames,
+            "repeated_frames": rec.n_duplicated,
+            "repeated_frame_indices": [i for i, d in enumerate(rec.duplicated) if d],
+            "error": cam.error or None,
+            APP_KEY: {"gaps": rec.gaps, "discarded_camera_frames": rec.skipped,
+                      "max_encoder_queue": rec.max_queue},
+        })
+
+    def _info(self, rows):
+        rec, m = self.recorder, self.meta
         vol, muted = sysutil.output_volume()
-        cam = self.camera
-        data = {
-            "software": f"Boom Box {__version__}",
-            "started_at": self.started_at,
-            "experimenter": self.meta["experimenter"],
-            "animal": {k: v for k, v in self.meta.items() if k != "experimenter"},
-            "stopped_early": self.stopped_early,
-            "time_reference": "All times in ms from the start of video frame 0; frames are 0-based.",
+        variant = self.protocol.get("assay_variant",
+                                    "Prepulse Inhibition" if self.protocol["type"] == "ppi" else "")
+        app = {
+            "protocol_name": self.protocol["name"],
+            "session_folder": self.folder.name,
+            "time_reference": "Times in seconds (stimuli, _frames.csv) or ms (trials) from the start "
+                              "of video frame 0; frames are counted from 0.",
+            "files": {"trials_csv": f"{self.base}_trials.csv", "events_log": f"{self.base}_events.log",
+                      "audio_wav": self.audio_name if self.mic else None},
+            "trials": rows,
             "protocol": self.protocol,
             "schedule": self.trials,
-            "planned_duration_s": self.total_s,
-            "recorded_duration_s": rec.n_frames / rec.fps,
-            "video": {"file": f"{self.base}.mp4", "camera": cam.name,
-                      "width": cam.width, "height": cam.height, "fps": cam.fps,
-                      "frames": rec.n_frames, "repeated_frames": rec.n_duplicated,
-                      "gaps": rec.gaps, "discarded_camera_frames": rec.skipped,
-                      "camera_latency_ms": cam.latency_s * 1000,
-                      "camera_controls": self.uvc_values,
-                      "camera_controls_locked": self.settings.get("camera_controls_locked"),
-                      "max_encoder_queue": rec.max_queue},
             "audio_output": {"device": self.engine.actual_device, "sample_rate": self.engine.fs,
                              "channel_mode": self.engine.channel_mode,
                              "system_volume": vol, "system_muted": muted,
@@ -348,12 +447,52 @@ class Session:
                              "underflows": self.engine.underflow_count},
             "microphone": None if not self.mic else {
                 "device": self.mic.device_name, "sample_rate": self.mic.fs,
-                "file": f"{self.base}_audio.wav", "overflows": self.mic.overflow_count},
-            "calibration": self.cal,
+                "overflows": self.mic.overflow_count},
             "calibrated": calibration.is_calibrated(self.cal),
+            "calibration": self.cal,
         }
-        with open(self.folder / f"{self.base}_session.json", "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        info = {
+            "schema_version": SCHEMA_VERSION,
+            "app_name": "Boom Box",
+            "app_version": __version__,
+            "date": f"{self.start_dt:%Y-%m-%d}",
+            "start_time": f"{self.start_dt:%H:%M:%S}",
+            "assay": ASSAY,
+            "assay_variant": variant or None,
+            "arena": self.arena,
+            "room": self.settings.get("room") or None,
+            "experimenter": m.get("experimenter"),
+            "cohort": m.get("cohort"),
+            "animal_id": m["animal_id"],
+            "sex": m.get("sex") or "U",
+            "strain": m.get("strain"),
+            "dob": m.get("dob"),
+            "treatment": m.get("treatment"),
+            "trial_day": int(m["trial_day"]) if m.get("trial_day") else None,
+            "session_number": int(m["session_number"]) if m.get("session_number") else None,
+            "notes": m.get("notes"),
+            "duration_set_min": round(self.total_s / 60.0, 3),
+            "duration_actual_s": round(rec.n_frames / rec.fps, 3),
+            "stopped_early": bool(self.stopped_early),
+            "cameras": [self._camera_entry()],
+            "stimuli": self._stimuli(),
+            APP_KEY: app,
+        }
+        return _clean(info)
+
+    def _write_info_json(self, info):
+        _write_atomic(self.folder / f"{self.base}_info.json",
+                      json.dumps(info, indent=2, default=str) + "\n")
+
+    def _write_info_csv(self, info):
+        """The trial fields as one spreadsheet row, for people (Track Tamer reads only the JSON)."""
+        row = {k: v for k, v in info.items() if not isinstance(v, (dict, list))}
+        row["video"] = info["cameras"][0]["video"]
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=list(row.keys()))
+        w.writeheader()
+        w.writerow({k: ("true" if v is True else "false" if v is False else v) for k, v in row.items()})
+        _write_atomic(self.folder / f"{self.base}_info.csv", buf.getvalue())
 
     def _write_events_log(self):
         with open(self.folder / f"{self.base}_events.log", "w") as f:
