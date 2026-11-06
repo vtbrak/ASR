@@ -21,9 +21,9 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import __version__, calibration, macsys
+from . import __version__, calibration, sysutil
 from .audio import MicRecorder
-from .camera import VideoRecorder, ffmpeg_path
+from .camera import _NO_WINDOW, VideoRecorder, ffmpeg_path
 from .stimuli import make_stimulus
 
 
@@ -190,7 +190,7 @@ class Session:
                    "-i", str(video_tmp), "-i", str(audio_final), "-map", "0:v", "-map", "1:a",
                    "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest",
                    "-movflags", "+faststart", str(video_final)]
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, **_NO_WINDOW)
             if res.returncode == 0:
                 video_tmp.unlink()
             else:
@@ -320,7 +320,7 @@ class Session:
 
     def _write_session_json(self, rows):
         rec = self.recorder
-        vol, muted = macsys.output_volume()
+        vol, muted = sysutil.output_volume()
         cam = self.camera
         data = {
             "software": f"Boom Box {__version__}",
@@ -343,7 +343,7 @@ class Session:
                       "max_encoder_queue": rec.max_queue},
             "audio_output": {"device": self.engine.actual_device, "sample_rate": self.engine.fs,
                              "channel_mode": self.engine.channel_mode,
-                             "mac_volume": vol, "mac_muted": muted,
+                             "system_volume": vol, "system_muted": muted,
                              "clipped_blocks": self.engine.clip_count,
                              "underflows": self.engine.underflow_count},
             "microphone": None if not self.mic else {

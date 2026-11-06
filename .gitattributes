@@ -1,0 +1,4 @@
+# Windows batch files need Windows line endings; Mac/shell scripts need Unix ones.
+*.bat     text eol=crlf
+*.command text eol=lf
+*.sh      text eol=lf

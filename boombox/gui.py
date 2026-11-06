@@ -3,6 +3,7 @@
 import copy
 import datetime as dt
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -14,16 +15,26 @@ import numpy as np
 import sounddevice as sd
 from PIL import Image, ImageDraw, ImageTk
 
-from . import __version__, audio, calibration, camera, config, macsys, protocols, uvc
+from . import __version__, audio, calibration, camera, config, protocols, sysutil, uvc
 from .config import ADD_NAME_LABEL
 from .session import Session
 from .stimuli import make_stimulus
 
+IS_WINDOWS = sys.platform == "win32"
+UI_FONT = "Segoe UI" if IS_WINDOWS else "Helvetica"
+MONO_FONT = "Consolas" if IS_WINDOWS else "Menlo"
+VOLUME_LABEL = sysutil.VOLUME_LABEL
 PREVIEW_W, PREVIEW_H = 640, 360
 PREVIEW_MIN_W = 240
 LEFT_MIN_W = 480
 SYSTEM_DEFAULT = "System default"
 NO_MIC = "None (don't record audio)"
+
+
+def _wheel_units(event):
+    if IS_WINDOWS:
+        return -int(event.delta / 120) or (-1 if event.delta > 0 else 1)
+    return -int(event.delta) or -1
 
 
 class ScrollFrame(ttk.Frame):
@@ -82,11 +93,24 @@ class ScrollFrame(ttk.Frame):
     def _on_wheel(self, event):
         if isinstance(event.widget, (tk.Text, tk.Listbox)) or self.vbar.winfo_ismapped() == 0:
             return
-        self.canvas.yview_scroll(-int(event.delta) or -1, "units")
+        self.canvas.yview_scroll(_wheel_units(event), "units")
 
     def _on_shift_wheel(self, event):
         if self.hbar.winfo_ismapped():
-            self.canvas.xview_scroll(-int(event.delta) or -1, "units")
+            self.canvas.xview_scroll(_wheel_units(event), "units")
+
+
+class DialogControls:
+    """Lock/re-apply interface (like uvc.UVCCamera) for cameras set through the driver window."""
+
+    def __init__(self, cam):
+        self.cam = cam
+
+    def read_all(self):
+        return self.cam.read_controls()
+
+    def apply_all(self, values):
+        return self.cam.apply_controls(values)
 
 
 class App:
@@ -108,7 +132,7 @@ class App:
         self._log_q = queue.Queue()
         self._preview_count = -1
         self._countdown = None
-        self.caffeinate = macsys.keep_awake()
+        self.caffeinate = sysutil.keep_awake()
 
         self._build_ui()
         self.start_audio()
@@ -121,10 +145,10 @@ class App:
     # Layout
     def _build_ui(self):
         style = ttk.Style()
-        style.configure("Big.TButton", font=("Helvetica", 15, "bold"), padding=8)
-        style.configure("Status.TLabel", font=("Menlo", 12))
-        style.configure("Header.TLabel", font=("Helvetica", 13, "bold"))
-        style.configure("Stop.TButton", font=("Helvetica", 15, "bold"), padding=8, foreground="#b00020")
+        style.configure("Big.TButton", font=(UI_FONT, 15, "bold"), padding=8)
+        style.configure("Status.TLabel", font=(MONO_FONT, 12))
+        style.configure("Header.TLabel", font=(UI_FONT, 13, "bold"))
+        style.configure("Stop.TButton", font=(UI_FONT, 15, "bold"), padding=8, foreground="#b00020")
 
         self.root.minsize(820, 540)
         self.root.geometry("1450x900")
@@ -180,7 +204,7 @@ class App:
         self.btn_noise = ttk.Button(bar, text="Start background noise", command=self.toggle_noise)
         self.btn_noise.pack(side="left", padx=(12, 4))
         self.big_status = tk.StringVar(value="Starting...")
-        tk.Label(bar, textvariable=self.big_status, font=("Helvetica", 18, "bold"),
+        tk.Label(bar, textvariable=self.big_status, font=(UI_FONT, 18, "bold"),
                  fg="#b00020", anchor="e").pack(side="right", fill="x", expand=True)
         self.root.bind_all("<Escape>", lambda e: self.on_stop())
 
@@ -195,7 +219,7 @@ class App:
         self.status_vars = {}
         self.status_value_labels = []
         for i, key in enumerate(["Camera", "Video", "Recording", "Elapsed", "Next stimulus", "Trial",
-                                 "Dropped frames", "Microphone", "Background noise", "Mac volume"]):
+                                 "Dropped frames", "Microphone", "Background noise", VOLUME_LABEL]):
             ttk.Label(grid, text=key + ":", style="Status.TLabel").grid(row=i, column=0, sticky="w")
             v = tk.StringVar(value="-")
             lab = ttk.Label(grid, textvariable=v, style="Status.TLabel", wraplength=400)
@@ -288,7 +312,7 @@ class App:
         ttk.Label(f, text="Log", style="Header.TLabel").grid(row=r, column=0, sticky="w", pady=(12, 2))
         r += 1
         # Small requested width so the log shrinks with the pane; it wraps long lines.
-        self.log_text = ScrolledText(f, height=14, width=20, font=("Menlo", 11), state="disabled",
+        self.log_text = ScrolledText(f, height=14, width=20, font=(MONO_FONT, 11), state="disabled",
                                      wrap="word")
         self.log_text.grid(row=r, column=0, columnspan=2, sticky="nsew")
         f.rowconfigure(r, weight=1)
@@ -324,7 +348,7 @@ class App:
         prow = ttk.Frame(f)
         prow.pack(fill="x", pady=4)
         ttk.Button(prow, text="Preview schedule", command=self.preview_schedule).pack(side="left")
-        self.schedule_text = ScrolledText(f, height=14, width=90, font=("Menlo", 11))
+        self.schedule_text = ScrolledText(f, height=14, width=90, font=(MONO_FONT, 11))
         self.schedule_text.pack(fill="both", expand=True)
         self.refresh_protocol_list(self.settings.get("last_protocol"))
 
@@ -334,7 +358,7 @@ class App:
         msg = ("1. Put the sound level meter where the mouse's head will be.  2. For each row, press "
                "Play (continuous tone), read the meter, and type the reading into 'Measured dB SPL'.  "
                "3. Press Save calibration.  Start at a low test level; wear hearing protection.  "
-               "Leave the Mac volume at the same setting for every session after calibrating.")
+               f"Leave the {VOLUME_LABEL} at the same setting for every session after calibrating.")
         ttk.Label(f, text=msg, wraplength=760, justify="left").pack(anchor="w")
         info = ttk.Frame(f)
         info.pack(fill="x", pady=6)
@@ -538,7 +562,7 @@ class App:
             self.engine.noise_target = noise
             self.log(f"Audio output: {self.engine.actual_device}, {self.engine.fs} Hz, "
                      f"channel {self.settings['channel_mode']}")
-            if "headphone" not in self.engine.actual_device.lower():
+            if not IS_WINDOWS and "headphone" not in self.engine.actual_device.lower():
                 self.log("NOTE: sound output is not 'External Headphones'. Plug the amplifier into the "
                          "headphone jack and choose it under Settings if needed.")
         except Exception as e:
@@ -588,8 +612,10 @@ class App:
             peak = 20 * np.log10(max(float(np.abs(data).max()), 1e-6))
             rms = 20 * np.log10(max(float(np.sqrt(np.mean(data ** 2))), 1e-6))
             messagebox.showinfo("Microphone", f"{name}\nPeak {peak:.1f} dBFS, average {rms:.1f} dBFS\n\n"
-                                "If both are below -80 dBFS, check macOS microphone permission for "
-                                "Terminal (System Settings > Privacy & Security > Microphone).")
+                                "If both are below -80 dBFS, check microphone permission: "
+                                + ("Settings > Privacy & security > Microphone > Let desktop apps "
+                                   "access your microphone." if IS_WINDOWS else
+                                   "System Settings > Privacy & Security > Microphone > Terminal."))
         except Exception as e:
             messagebox.showerror("Microphone", str(e))
 
@@ -629,7 +655,7 @@ class App:
             self.camera = None
         name, w, h, fps, lat = self.camera_params()
         try:
-            cam = camera.Camera(name, w, h, fps, lat)
+            cam = camera.make_camera(name, w, h, fps, lat)
             cam.start()
             self.camera = cam
             self._preview_count = -1
@@ -647,9 +673,13 @@ class App:
         if cam.frame_count == 0:
             detail = cam.error or cam.stderr_text() or "no frames received"
             self.log(f"CAMERA not delivering frames: {detail}")
-            messagebox.showerror("Camera", "The camera is not sending video.\n\n"
-                                 "If this is the first run, allow camera access for Terminal in System "
-                                 "Settings > Privacy & Security > Camera, then quit and restart the program.\n\n"
+            if IS_WINDOWS:
+                hint = ("Close other programs that may be using the camera (Camera app, Zoom, Teams), and "
+                        "check Settings > Privacy & security > Camera > Let desktop apps access your camera.")
+            else:
+                hint = ("If this is the first run, allow camera access for Terminal in System "
+                        "Settings > Privacy & Security > Camera, then quit and restart the program.")
+            messagebox.showerror("Camera", f"The camera is not sending video.\n\n{hint}\n\n"
                                  f"Details: {detail[-600:]}")
         else:
             fps = cam.measured_fps()
@@ -668,7 +698,7 @@ class App:
                        key=lambda s: (int(s.split("x")[0]), int(s.split("x")[1].split()[0]), float(s.split("@")[1].split()[0])))
         win = tk.Toplevel(self.root)
         win.title(f"Modes: {name}")
-        t = ScrolledText(win, width=40, height=30, font=("Menlo", 11))
+        t = ScrolledText(win, width=40, height=30, font=(MONO_FONT, 11))
         t.pack(fill="both", expand=True)
         t.insert("end", "\n".join(lines) or "No modes reported")
 
@@ -677,6 +707,9 @@ class App:
         for w in self.controls_frame.winfo_children():
             w.destroy()
         self.control_vars, self.control_widgets = {}, []
+        if getattr(self.camera, "has_settings_dialog", False):
+            self.build_dialog_controls()
+            return
         name = self.var_camera.get()
         ids = camera.usb_cameras().get(name)
         if not ids:
@@ -762,7 +795,63 @@ class App:
             except tk.TclError:
                 pass
 
+    def build_dialog_controls(self):
+        """Windows: camera settings are changed in the driver's own window, then locked here."""
+        self.uvc = DialogControls(self.camera)
+        f = self.controls_frame
+        btn = ttk.Button(f, text="Open camera settings window", command=self.open_camera_dialog)
+        btn.grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Button(f, text="Show current values", command=self.show_camera_values).grid(
+            row=0, column=1, sticky="w", padx=8)
+        ttk.Label(f, wraplength=520, justify="left", text=(
+            "Use the camera's settings window to turn off automatic exposure and set exposure, gain and "
+            "focus while watching the preview. Then tick 'Lock camera settings' above: the values are "
+            "saved and re-applied every session.")).grid(row=1, column=0, columnspan=2, sticky="w")
+        self.var_cam_values = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.var_cam_values, font=(MONO_FONT, 11), justify="left").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=4)
+        self.control_widgets = [btn]
+        self.update_lock_state()
+        self.var_uvc_status.set("Camera controls: camera settings window." +
+                                ("  LOCKED." if self.var_cam_lock.get() else ""))
+        if self.var_cam_lock.get() and self.settings.get("camera_controls"):
+            self._apply_locked_when_ready(time.time() + 15)
+
+    def _apply_locked_when_ready(self, deadline):
+        """Re-apply locked values once the camera has opened (it opens in the background)."""
+        cam = self.camera
+        if cam is None or not getattr(cam, "has_settings_dialog", False):
+            return
+        if cam.frame_count == 0:
+            if time.time() < deadline and not cam.error:
+                self.root.after(500, lambda: self._apply_locked_when_ready(deadline))
+            return
+        try:
+            errs = self.uvc.apply_all(self.settings["camera_controls"])
+            self.log("Applied locked camera settings." + (f" Not accepted: {errs}" if errs else ""))
+        except Exception as e:
+            self.log(f"Could not apply locked camera settings: {e}")
+
+    def open_camera_dialog(self):
+        if self.var_cam_lock.get():
+            messagebox.showinfo("Camera", "Unlock camera settings first.")
+            return
+        try:
+            self.camera.open_settings_dialog()
+        except Exception as e:
+            messagebox.showerror("Camera", f"Could not open the camera settings window: {e}")
+
+    def show_camera_values(self):
+        try:
+            vals = self.uvc.read_all()
+            self.var_cam_values.set("\n".join(f"{k:<14} {v:g}" for k, v in vals.items()) or "(none reported)")
+        except Exception as e:
+            self.var_cam_values.set(f"Could not read values: {e}")
+
     def reset_cam_controls(self):
+        if isinstance(self.uvc, DialogControls):
+            messagebox.showinfo("Camera", "Use the Default button in the camera settings window.")
+            return
         if not self.uvc or self.var_cam_lock.get():
             messagebox.showinfo("Camera", "Unlock camera settings first.")
             return
@@ -848,7 +937,7 @@ class App:
 
         tf = ttk.LabelFrame(e, text="Tones: one per line  'time (s), frequency (kHz)'", padding=6)
         tf.grid(row=0, column=1, rowspan=2, sticky="nw", padx=10)
-        self.trials_text = tk.Text(tf, width=26, height=12, font=("Menlo", 11))
+        self.trials_text = tk.Text(tf, width=26, height=12, font=(MONO_FONT, 11))
         self.trials_text.pack()
         self.trials_text.insert("end", "\n".join(f"{t['time_s']:g}, {t['freq_hz'] / 1000:g}" for t in p["trials"]))
 
@@ -1102,7 +1191,7 @@ class App:
         if calibration.is_calibrated(self.cal):
             age = calibration.age_days(self.cal)
             self.var_cal_status.set(f"Saved calibration: {self.cal['date']} ({age:.0f} days old), "
-                                    f"Mac volume {self.cal.get('mac_volume')}")
+                                    f"{VOLUME_LABEL} {self.cal.get('mac_volume')}")
         else:
             self.var_cal_status.set("NOT CALIBRATED: levels are approximate until you calibrate.")
 
@@ -1185,14 +1274,14 @@ class App:
         if n == 0:
             messagebox.showinfo("Calibration", "Type at least one measured dB SPL value first.")
             return
-        vol, muted = macsys.output_volume()
+        vol, muted = sysutil.output_volume()
         self.cal.update(weighting=self.var_weighting.get().split()[0], mac_volume=vol,
                         output_device=self.engine.actual_device if self.engine else None,
                         channel_mode=self.settings["channel_mode"], sample_rate=self.settings["sample_rate"])
         calibration.save(self.cal)
         self.update_cal_labels()
-        self.log(f"Calibration saved ({n} measurements, Mac volume {vol}).")
-        messagebox.showinfo("Calibration", f"Saved {n} measurements.\n\nKeep the Mac volume at {vol} and "
+        self.log(f"Calibration saved ({n} measurements, {VOLUME_LABEL} {vol}).")
+        messagebox.showinfo("Calibration", f"Saved {n} measurements.\n\nKeep the {VOLUME_LABEL} at {vol} and "
                                            "the amplifier knob where it is.")
 
     def check_protocol_levels(self):
@@ -1282,11 +1371,11 @@ class App:
             age = calibration.age_days(self.cal)
             if age is not None and age > float(self.settings["calibration_max_age_days"]):
                 warnings.append(f"Calibration is {age:.0f} days old.")
-            vol, muted = macsys.output_volume()
+            vol, muted = sysutil.output_volume()
             if muted:
-                errors.append("The Mac's sound is MUTED.")
+                errors.append("The computer's sound is MUTED.")
             elif self.cal.get("mac_volume") is not None and vol != self.cal["mac_volume"]:
-                warnings.append(f"Mac volume is {vol} but was {self.cal['mac_volume']} at calibration.")
+                warnings.append(f"{VOLUME_LABEL} is {vol} but was {self.cal['mac_volume']} at calibration.")
             if self.engine and self.cal.get("output_device") not in (None, self.engine.actual_device):
                 warnings.append(f"Sound output is '{self.engine.actual_device}' but calibration used "
                                 f"'{self.cal['output_device']}'.")
@@ -1299,10 +1388,11 @@ class App:
             warnings.append("Camera settings are not locked (Camera tab).")
         if not self.settings.get("mic_device"):
             warnings.append("No microphone selected: there will be no audio check track.")
-        free = macsys.free_gb(self.settings["data_dir"]) if self.settings["data_dir"] else None
+        free = sysutil.free_gb(self.settings["data_dir"]) if self.settings["data_dir"] else None
         if free is not None and free < 5:
             warnings.append(f"Only {free:.1f} GB free disk space.")
-        warnings.append("Turn on Do Not Disturb (Control Center > Focus) so alert sounds can't "
+        where = ("Settings > System > Notifications" if IS_WINDOWS else "Control Center > Focus")
+        warnings.append(f"Turn on Do Not Disturb ({where}) so alert sounds can't "
                         "startle the animal, and close other apps that make sounds.")
         return errors, warnings, p, trials, total
 
@@ -1500,8 +1590,8 @@ class App:
                                      else "Start background noise")
         self._status_ticks = getattr(self, "_status_ticks", 0) + 1
         if self._status_ticks % 25 == 1:
-            vol, muted = macsys.output_volume()
-            sv["Mac volume"].set("MUTED" if muted else f"{vol}")
+            vol, muted = sysutil.output_volume()
+            sv[VOLUME_LABEL].set("MUTED" if muted else f"{vol}")
         self.root.after(200, self._tick_status)
 
     # =====================================================================

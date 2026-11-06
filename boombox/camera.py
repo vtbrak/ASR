@@ -1,10 +1,13 @@
-"""USB camera capture (ffmpeg/AVFoundation) and constant-frame-rate MP4 recording.
+"""USB camera capture and constant-frame-rate MP4 recording.
 
-Frames are read from ffmpeg as raw grayscale and timestamped on arrival with
-time.perf_counter() (minus a configurable camera latency). The recorder keeps
-the output locked to the wall clock: if the camera drops frames the previous
-frame is repeated (and logged), so frame N in the MP4 is at N / fps seconds
-and lines up with the audio track.
+macOS: frames come from ffmpeg (AVFoundation) as raw grayscale.
+Windows: frames come from OpenCV (DirectShow), which also gives access to the
+camera's own settings window and its exposure/gain/focus properties.
+
+Frames are timestamped on arrival with time.perf_counter() (minus a
+configurable camera latency). The recorder keeps the output locked to the wall
+clock: if the camera drops frames the previous frame is repeated (and logged),
+so frame N in the MP4 is at N / fps seconds and lines up with the audio track.
 """
 
 import collections
@@ -19,8 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
+IS_WINDOWS = sys.platform == "win32"
 TEST_PATTERN = "Test pattern (no camera)"
 MODE_RE = re.compile(r"(\d+)x(\d+)@\[([\d.]+) ([\d.]+)\]fps")
+DSHOW_MODE_RE = re.compile(r"max s=(\d+)x(\d+) fps=([\d.]+)")
 RESOLUTIONS = {
     "A  800x600": "800x600",
     "B  1280x720 (recommended)": "1280x720",
@@ -30,18 +35,52 @@ RESOLUTIONS = {
     "F  1920x1200": "1920x1200",
 }
 FPS_CHOICES = [30, 60, 90]
+# Don't show a console window for each ffmpeg call on Windows.
+_NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
 
 
 def ffmpeg_path():
-    p = Path(sys.prefix) / "bin" / "ffmpeg"
+    if IS_WINDOWS:
+        p = Path(sys.prefix) / "Library" / "bin" / "ffmpeg.exe"
+    else:
+        p = Path(sys.prefix) / "bin" / "ffmpeg"
     return str(p) if p.exists() else (shutil.which("ffmpeg") or "ffmpeg")
 
 
+def _ffmpeg_stderr(args):
+    return subprocess.run([ffmpeg_path(), "-hide_banner", *args], capture_output=True,
+                          text=True, errors="replace", timeout=20, **_NO_WINDOW).stderr
+
+
+def _dshow_devices():
+    """[(name, alternative name)] of DirectShow video devices, in index order."""
+    out = _ffmpeg_stderr(["-list_devices", "true", "-f", "dshow", "-i", "dummy"])
+    devices, in_video = [], False
+    for line in out.splitlines():
+        if "DirectShow video devices" in line:          # older ffmpeg layout
+            in_video = True
+            continue
+        if "DirectShow audio devices" in line:
+            in_video = False
+            continue
+        m = re.search(r'"(.+?)"(?:\s+\((\w+)\))?\s*$', line)
+        if not m:
+            continue
+        if "Alternative name" in line:
+            if devices and devices[-1][1] is None:
+                devices[-1] = (devices[-1][0], m.group(1))
+            continue
+        kind = m.group(2)
+        if kind == "video" or (kind is None and in_video):
+            devices.append((m.group(1), None))
+    return devices
+
+
 def list_cameras():
-    """Names of AVFoundation video devices, in index order (screens excluded)."""
-    out = subprocess.run([ffmpeg_path(), "-hide_banner", "-f", "avfoundation",
-                          "-list_devices", "true", "-i", ""],
-                         capture_output=True, text=True, timeout=20).stderr
+    """Names of the connected video devices, in index order (screens excluded)."""
+    if IS_WINDOWS:
+        return [name for name, _ in _dshow_devices()]
+    out = _ffmpeg_stderr(["-f", "avfoundation", "-list_devices", "true", "-i", ""])
     names, in_video = [], False
     for line in out.splitlines():
         if "AVFoundation video devices" in line:
@@ -63,15 +102,19 @@ def camera_index(name):
 
 
 def list_modes(name):
-    """[(width, height, fps)] supported by the camera."""
+    """[(width, height, max fps)] supported by the camera."""
     if name == TEST_PATTERN:
         return [(int(r.split("x")[0]), int(r.split("x")[1]), f)
                 for r in RESOLUTIONS.values() for f in FPS_CHOICES]
-    idx = camera_index(name)
-    out = subprocess.run([ffmpeg_path(), "-hide_banner", "-f", "avfoundation",
-                          "-framerate", "1000", "-video_size", "1x1", "-i", f"{idx}:none"],
-                         capture_output=True, text=True, timeout=20).stderr
     modes = set()
+    if IS_WINDOWS:
+        out = _ffmpeg_stderr(["-f", "dshow", "-list_options", "true", "-i", f"video={name}"])
+        for m in DSHOW_MODE_RE.finditer(out):
+            modes.add((int(m.group(1)), int(m.group(2)), float(m.group(3))))
+        return sorted(modes)
+    idx = camera_index(name)
+    out = _ffmpeg_stderr(["-f", "avfoundation", "-framerate", "1000", "-video_size", "1x1",
+                          "-i", f"{idx}:none"])
     for m in MODE_RE.finditer(out):
         modes.add((int(m.group(1)), int(m.group(2)), float(m.group(4))))
     return sorted(modes)
@@ -87,13 +130,23 @@ def pick_framerate(modes, width, height, fps):
 
 
 def usb_cameras():
-    """{camera name: (vendor_id, product_id)} for USB (UVC) cameras, from system_profiler."""
+    """{camera name: (vendor_id, product_id)} for USB (UVC) cameras."""
+    cams = {}
+    if IS_WINDOWS:
+        try:
+            for name, alt in _dshow_devices():
+                m = re.search(r"vid_([0-9a-f]{4})&pid_([0-9a-f]{4})", alt or "", re.I)
+                if m:
+                    cams[name] = (int(m.group(1), 16), int(m.group(2), 16))
+        except Exception:
+            pass
+        return cams
     try:
         out = subprocess.run(["system_profiler", "SPCameraDataType"],
                              capture_output=True, text=True, timeout=20).stdout
     except Exception:
         return {}
-    cams, name = {}, None
+    name = None
     for line in out.splitlines():
         s = line.strip()
         if s.endswith(":") and line.startswith("    ") and not line.startswith("      "):
@@ -105,18 +158,28 @@ def usb_cameras():
 
 
 def default_camera(names):
-    """Prefer an external USB camera over built-in/iPhone cameras."""
+    """Prefer an external USB camera over built-in, phone and virtual cameras."""
+    skip = ("FaceTime", "iPhone", "Integrated", "Virtual", "OBS")
     usb = usb_cameras()
     for n in names:
-        if n in usb:
+        if n in usb and not any(k in n for k in skip):
             return n
     for n in names:
-        if "FaceTime" not in n:
+        if not any(k in n for k in skip):
             return n
     return names[0] if names else TEST_PATTERN
 
 
+def make_camera(name, width, height, fps, latency_ms=0.0):
+    """The right capture class for this computer and camera."""
+    if IS_WINDOWS and name != TEST_PATTERN:
+        return DShowCamera(name, width, height, fps, latency_ms)
+    return Camera(name, width, height, fps, latency_ms)
+
+
 class Camera:
+    has_settings_dialog = False
+
     def __init__(self, name, width, height, fps, latency_ms=0.0):
         self.name = name
         self.width, self.height, self.fps = int(width), int(height), int(fps)
@@ -151,7 +214,7 @@ class Camera:
     def start(self):
         cmd = self._command()
         self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                      stdin=subprocess.DEVNULL, bufsize=0)
+                                      stdin=subprocess.DEVNULL, bufsize=0, **_NO_WINDOW)
         threading.Thread(target=self._read_stderr, daemon=True).start()
         threading.Thread(target=self._read_frames, daemon=True).start()
 
@@ -208,6 +271,146 @@ class Camera:
             self.error = self.stderr_text() or "Camera stream ended unexpectedly."
 
 
+class DShowCamera:
+    """Windows capture through OpenCV/DirectShow, with the same interface as Camera.
+
+    The capture device is opened and used only on the capture thread (DirectShow
+    objects belong to the thread that created them); camera-setting calls from
+    the GUI are queued to that thread.
+    """
+
+    # Properties read when settings are locked and re-applied at every session.
+    # Auto modes come first so manual values stick.
+    CONTROL_NAMES = ["auto_exposure", "autofocus", "exposure", "gain", "focus", "brightness",
+                     "contrast", "gamma", "sharpness", "white_balance"]
+    has_settings_dialog = True
+
+    def __init__(self, name, width, height, fps, latency_ms=0.0):
+        import cv2
+        self.cv2 = cv2
+        self.props = {"auto_exposure": cv2.CAP_PROP_AUTO_EXPOSURE, "autofocus": cv2.CAP_PROP_AUTOFOCUS,
+                      "exposure": cv2.CAP_PROP_EXPOSURE, "gain": cv2.CAP_PROP_GAIN,
+                      "focus": cv2.CAP_PROP_FOCUS, "brightness": cv2.CAP_PROP_BRIGHTNESS,
+                      "contrast": cv2.CAP_PROP_CONTRAST, "gamma": cv2.CAP_PROP_GAMMA,
+                      "sharpness": cv2.CAP_PROP_SHARPNESS,
+                      "white_balance": cv2.CAP_PROP_WB_TEMPERATURE}
+        self.name = name
+        self.width, self.height, self.fps = int(width), int(height), int(fps)
+        self.latency_s = float(latency_ms) / 1000.0
+        self.latest = None
+        self.latest_time = None
+        self.frame_count = 0
+        self.recorder = None
+        self.error = None
+        self._times = collections.deque(maxlen=self.fps * 3)
+        self._messages = collections.deque(maxlen=40)
+        self._cmds = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = None
+        self._index = camera_index(name)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=3)
+
+    @property
+    def alive(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def measured_fps(self):
+        if len(self._times) < 10:
+            return 0.0
+        span = self._times[-1] - self._times[0]
+        return (len(self._times) - 1) / span if span > 0 else 0.0
+
+    def stderr_text(self):
+        return "\n".join(self._messages)
+
+    # -- camera settings (run on the capture thread) --------------------------
+    def _call(self, fn, timeout=3.0):
+        if not self.alive:
+            raise RuntimeError("Camera is not running")
+        done, box = threading.Event(), {}
+        self._cmds.put((fn, done, box))
+        if not done.wait(timeout):
+            raise RuntimeError("Camera did not respond")
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
+
+    def open_settings_dialog(self):
+        """Open the camera driver's own settings window (exposure, gain, focus, ...)."""
+        return self._call(lambda cap: cap.set(self.cv2.CAP_PROP_SETTINGS, 1))
+
+    def read_controls(self):
+        def read(cap):
+            vals = {}
+            for n in self.CONTROL_NAMES:
+                v = cap.get(self.props[n])
+                if v != -1:
+                    vals[n] = v
+            return vals
+        return self._call(read)
+
+    def apply_controls(self, values):
+        def apply(cap):
+            errors = []
+            for n in self.CONTROL_NAMES:
+                if n in values and not cap.set(self.props[n], float(values[n])):
+                    errors.append(n)
+            return errors
+        return self._call(apply)
+
+    # -- capture loop -----------------------------------------------------------
+    def _run(self):
+        cv2 = self.cv2
+        cap = cv2.VideoCapture(self._index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            self.error = f"Could not open camera '{self.name}'. Is another program using it?"
+            return
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        cap.set(cv2.CAP_PROP_FPS, self.fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        got_w, got_h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if (got_w, got_h) != (self.width, self.height):
+            cap.release()
+            self.error = (f"{self.name} does not support {self.width}x{self.height} "
+                          f"(it offered {got_w}x{got_h}). Use 'Show camera modes' to see options.")
+            return
+        try:
+            while not self._stop.is_set():
+                while not self._cmds.empty():
+                    fn, done, box = self._cmds.get()
+                    try:
+                        box["result"] = fn(cap)
+                    except Exception as e:
+                        box["error"] = e
+                    done.set()
+                ok, frame = cap.read()
+                if not ok:
+                    self.error = "Camera stopped sending video (unplugged or in use by another program)."
+                    break
+                t = time.perf_counter() - self.latency_s
+                gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                if gray.shape != (self.height, self.width):
+                    gray = cv2.resize(gray, (self.width, self.height))
+                self.latest, self.latest_time = gray, t
+                self.frame_count += 1
+                self._times.append(t)
+                rec = self.recorder
+                if rec is not None:
+                    rec.push(gray, t)
+        finally:
+            cap.release()
+
+
 class VideoRecorder:
     """Encodes pushed frames to H.264 MP4 at a constant frame rate locked to the wall clock."""
 
@@ -229,7 +432,7 @@ class VideoRecorder:
                "-r", str(fps), "-i", "pipe:0",
                "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
                "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.path]
-        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, **_NO_WINDOW)
         self._thread = threading.Thread(target=self._writer, daemon=True)
         self._thread.start()
 

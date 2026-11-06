@@ -7,6 +7,7 @@ perf time T starts on the exact sample that reaches the DAC at T.
 
 import collections
 import queue
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,12 +19,33 @@ import soundfile as sf
 from .stimuli import db_to_amp
 
 
+IS_WINDOWS = sys.platform == "win32"
+WASAPI = "Windows WASAPI"
+
+
+def _hostapi_name(dev):
+    return sd.query_hostapis(dev["hostapi"])["name"]
+
+
+def _label(dev):
+    """Name shown in Settings. Windows lists each device once per audio system, so add it."""
+    return f"{dev['name']} [{_hostapi_name(dev)}]" if IS_WINDOWS else dev["name"]
+
+
+def _devices(key):
+    devs = [d for d in sd.query_devices() if d[key] > 0]
+    if IS_WINDOWS:
+        # WASAPI first: it reports the most accurate output/input timestamps.
+        devs.sort(key=lambda d: _hostapi_name(d) != WASAPI)
+    return devs
+
+
 def list_output_devices():
-    return [d["name"] for d in sd.query_devices() if d["max_output_channels"] > 0]
+    return [_label(d) for d in _devices("max_output_channels")]
 
 
 def list_input_devices():
-    return [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
+    return [_label(d) for d in _devices("max_input_channels")]
 
 
 def default_output_name():
@@ -34,13 +56,29 @@ def default_output_name():
 
 
 def _device_index(name, kind):
-    if not name:
-        return None
     key = "max_output_channels" if kind == "output" else "max_input_channels"
+    if not name:
+        if IS_WINDOWS:   # default device of WASAPI rather than the older MME system
+            for api in sd.query_hostapis():
+                if api["name"] == WASAPI:
+                    idx = api["default_output_device" if kind == "output" else "default_input_device"]
+                    if idx >= 0:
+                        return idx
+        return None
     for i, d in enumerate(sd.query_devices()):
-        if d["name"] == name and d[key] > 0:
+        if d[key] > 0 and name in (_label(d), d["name"]):
             return i
     raise ValueError(f"Audio device not found: {name}")
+
+
+def _extra_settings(dev_index):
+    """Let WASAPI convert the sample rate instead of refusing a non-matching one."""
+    if not IS_WINDOWS or dev_index is None or _hostapi_name(sd.query_devices(dev_index)) != WASAPI:
+        return None
+    try:
+        return sd.WasapiSettings(auto_convert=True)
+    except TypeError:
+        return None
 
 
 def _pa_to_perf(stream_time_now):
@@ -94,10 +132,10 @@ class AudioEngine:
             self._chans = [1]
         else:
             self._chans = list(range(self.n_channels))
-        self.actual_device = info["name"]
+        self.actual_device = _label(info)
         self._stream = sd.OutputStream(
             samplerate=self.fs, device=dev, channels=self.n_channels, dtype="float32",
-            latency="low", callback=self._callback)
+            latency="low", callback=self._callback, extra_settings=_extra_settings(dev))
         self._stream.start()
 
     def stop(self):
@@ -224,7 +262,8 @@ class MicRecorder:
         self._thread = threading.Thread(target=self._writer, daemon=True)
         self._thread.start()
         self._stream = sd.InputStream(samplerate=self.fs, device=self._dev, channels=1,
-                                      dtype="float32", callback=self._callback)
+                                      dtype="float32", callback=self._callback,
+                                      extra_settings=_extra_settings(self._dev))
         self._stream.start()
 
     def _callback(self, indata, frames, time_info, status):

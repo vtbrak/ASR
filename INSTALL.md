@@ -1,8 +1,10 @@
-# Installing Boom Box on a Mac
+# Installing Boom Box
 
 No programming knowledge needed. Plan on about 30 minutes and an internet connection for the first install.
 
-**You'll need:** a Mac with a headphone jack, the USB camera, the USB microphone, and the amplifier/speaker.
+**You'll need:** a Mac or Windows PC with a headphone jack (or a USB audio adapter), the USB camera, the USB microphone, and the amplifier/speaker.
+
+The Mac instructions come first. **Using a Windows PC? Go to [Installing on Windows](#installing-on-windows).**
 
 ---
 
@@ -149,3 +151,66 @@ Use these steps whenever you start the program again, including after closing it
 ### Optional: make double-clicking work without a password
 - In Terminal, type `xattr -dr com.apple.quarantine` and **one space**, drag the **BoomBox folder** into the window, and press Return.
 - This removes macOS's "downloaded from the internet" flag from the program's files, so double-clicking them works normally. It only changes files you own, so no password is needed.
+
+---
+
+## Installing on Windows
+
+Windows support is new in this version and has not yet been tested on a PC. Please note anything that doesn't match these steps.
+
+### Step 1. Install Anaconda (skip if it's already installed)
+- Go to https://www.anaconda.com/download and download the **Windows** installer.
+- Run it and keep the default choices, including **"Just Me"**. That choice doesn't need an administrator password.
+
+### Step 2. Download the Boom Box program
+- Go to https://github.com/vtbrak/ASR, click the green **Code** button, then **Download ZIP**.
+- In your **Downloads** folder, right-click the ZIP file and choose **Extract All…**, then **Extract**.
+- Move the extracted folder (**ASR-main**) to your **Desktop** and rename it **BoomBox**.
+
+### Step 3. Run the one-time setup
+- Open the **BoomBox** folder and double-click **Boom_Box_Setup.bat**.
+  - If Windows shows **"Windows protected your PC"**, click **More info**, then **Run anyway**. This doesn't need an administrator password.
+  - The file may show as just **Boom_Box_Setup** if Windows hides file extensions. It's the one whose type is "Windows Batch File".
+- A black window opens and downloads everything the program needs (5–15 minutes).
+- When it says **"Done."**, press any key to close it.
+
+### Step 4. Plug in the equipment
+- **Camera** and **microphone:** into USB ports.
+- **Amplifier:** a cable from the PC's **headphone jack** (or a USB audio adapter) to the amplifier input. Keep the amplifier's volume low for now.
+
+### Step 5. Start the program
+- Double-click **Boom_Box.bat**. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
+- A black window opens, followed by the Boom Box window.
+- **Keep the black window open.** Closing it quits the program.
+
+### Step 6. Allow camera and microphone access
+- If the video stays black, or the microphone hears nothing, open **Settings → Privacy & security → Camera** and turn on **Let desktop apps access your camera**.
+- Do the same under **Settings → Privacy & security → Microphone**.
+- Then close and restart Boom Box.
+
+### Step 7. Set up the program (first time only)
+- **Settings tab**
+  - **Sound output:** choose the headphone or speaker output that goes to the amplifier, preferably one ending in **[Windows WASAPI]**, which has the most accurate timing.
+  - **Microphone:** choose the USB microphone, preferably one ending in **[Windows WASAPI]**. Click **Test mic** to check it.
+  - Click **Save settings and restart audio**.
+- **Camera tab**
+  - Choose your USB camera, keep **B 1280x720** and **30** fps, then click **Apply / restart camera**.
+  - Click **Open camera settings window**. Turn off automatic exposure, then set exposure, gain and focus while watching the preview.
+  - Close that window and tick **Lock camera settings**. The values are saved and re-applied every session.
+- **Calibration tab:** as on the Mac. Afterwards, leave the **Windows volume** at the same level for every session.
+- **Session tab:** open the **Experimenter** list, choose **Add a name**, and type your name.
+
+### Starting the program each time on Windows
+- Plug in the equipment, then double-click **Boom_Box.bat**. You don't need to open Anaconda or rerun the setup.
+- Keep the black window open while the program runs.
+- Optional: right-click **Boom_Box.bat** → **Show more options** → **Send to** → **Desktop (create shortcut)**.
+
+### Windows troubleshooting
+
+| Problem | What to do |
+|---|---|
+| **"Could not find Anaconda"** | Repeat Step 1, keeping the default choices. |
+| **Camera not sending video** | Close other programs that might be using the camera (Camera app, Zoom, Teams), check Step 6, then click **Apply / restart camera**. |
+| **The camera isn't in the list** | Plug it in, then click **Refresh list** on the Camera tab. |
+| **No sound from the speaker** | Choose a different **Sound output** on the Settings tab (try the [Windows WASAPI] one for your headphone jack), check the Windows volume isn't muted, and that the amplifier is on. |
+| **Notifications make sounds during sessions** | Turn on **Do not disturb** in **Settings → System → Notifications**. |

@@ -1,6 +1,7 @@
 # Boom Box
 
-Records acoustic startle response (ASR) and prepulse inhibition (PPI) sessions in mice on a Mac:
+Records acoustic startle response (ASR) and prepulse inhibition (PPI) sessions in mice on a Mac or
+Windows PC (Windows support is new and still being tested):
 grayscale video from a USB camera, raised-cosine tone bursts through the headphone jack
 (to an amplifier and speaker), constant background white noise, and a microphone track used to
 check sync. Every stimulus is logged with the video frame it occurred in.
@@ -14,8 +15,12 @@ Everything about installing is in **[INSTALL.md](INSTALL.md)**:
 - [No password method](INSTALL.md#no-password-method): install and start from Terminal (`bash` + drag the file) when macOS asks for an administrator password
 - [Installing a newer version](INSTALL.md#installing-a-newer-version-later): update without losing calibration, settings or data
 - [Troubleshooting](INSTALL.md#troubleshooting)
+- [Installing on Windows](INSTALL.md#installing-on-windows): Anaconda, setup with `Boom_Box_Setup.bat`, and first-time settings on a PC
 
 ## Starting the program each time
+
+**On Windows:** double-click **`Boom_Box.bat`** and keep the black window open while the program runs.
+You don't need to open Anaconda or rerun the setup. The rest of this section is for Macs.
 
 After the first-time setup, use either method below. That includes after closing the program, logging
 out, or restarting the Mac. **You never need to open Anaconda or run `Boom_Box_Setup.command` again**;
